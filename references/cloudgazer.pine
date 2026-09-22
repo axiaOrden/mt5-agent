@@ -1,0 +1,1509 @@
+//@version=6
+indicator("Cloudgazer", overlay=true)
+
+
+//────────────────────
+// INPUTS
+//────────────────────
+//────────────────────
+// ICHIMOKU PERIODS (INLINE)
+//────────────────────
+tenkansen = input.int(
+    9,
+    "Tenkan",
+    minval = 1,
+    group  = "Ichimoku",
+    inline = "ichi_len"
+)
+
+kijunsen = input.int(
+    26,
+    "Kijun",
+    minval = 1,
+    group  = "Ichimoku",
+    inline = "ichi_len"
+)
+
+senko = input.int(
+    52,
+    "Senkou",
+    minval = 1,
+    group  = "Ichimoku",
+    inline = "ichi_len"
+)
+
+//────────────────────
+// ICHIMOKU COLORS
+//────────────────────
+//────────────────────
+// ICHIMOKU COLORS (INLINE)
+//────────────────────
+tenkanColor = input.color(
+    color.blue,
+    "Tenkan",
+    group = "Ichimoku",
+    inline = "ichi"
+)
+
+kijunColor = input.color(
+    color.purple,
+    "Kijun",
+    group = "Ichimoku",
+    inline = "ichi"
+)
+
+spanAColor = input.color(
+    color.green,
+    "Span A",
+    group = "Ichimoku",
+    inline = "ichi"
+)
+
+spanBColor = input.color(
+    color.red,
+    "Span B",
+    group = "Ichimoku",
+    inline = "ichi"
+)
+
+chikouColor = input.color(
+    color.orange,
+    "Chikou",
+    group = "Ichimoku",
+    inline = "ichi"
+)
+
+cloudBullColor = input.color(
+    color.green,
+    "Cloud Bull",
+    group = "Ichimoku",
+    inline = "cloud"
+)
+
+cloudBearColor = input.color(
+    color.red,
+    "Cloud Bear",
+    group = "Ichimoku",
+    inline = "cloud"
+)
+
+
+
+//────────────────────
+// PVSRA SETTINGS (INLINE)
+//────────────────────
+volLen = input.int(
+    20,
+    "Vol MA",
+    minval = 1,
+    group  = "PVSRA",
+    inline = "pvsra"
+)
+
+climaxMul = input.float(
+    2.0,
+    "Climax",
+    minval = 0.1,
+    step   = 0.1,
+    group  = "PVSRA",
+    inline = "pvsra"
+)
+
+aboveMul = input.float(
+    1.2,
+    "Above",
+    minval = 0.1,
+    step   = 0.1,
+    group  = "PVSRA",
+    inline = "pvsra"
+)
+
+//────────────────────
+// ENGULFING CANDLES
+//────────────────────
+showEngulfing = input.bool(
+    true,
+    "Highlight Engulfing",
+    group = "Engulfing Candles"
+)
+
+engulfingBuyColor = input.color(
+    color.lime,
+    "Buy",
+    group = "Engulfing Candles",
+    inline = "engulfing_colors"
+)
+
+engulfingSellColor = input.color(
+    color.red,
+    "Sell",
+    group = "Engulfing Candles",
+    inline = "engulfing_colors"
+)
+
+//────────────────────
+// TREND SCOUTER CHANNELS
+// Adapted from Fibonacci Auto Trend Scouter by sirkriz (MPL-2.0).
+//────────────────────
+trendSource = input.source(hlc3, "Source", group = "Trend Scouter", inline = "trend_source")
+trendCoords = input.string("High/Low", "Coords", options = ["Source", "High/Low"], group = "Trend Scouter", inline = "trend_source")
+shortTrendLength = input.int(8, "Short", minval = 2, group = "Trend Scouter", inline = "trend_lengths")
+longTrendLength = input.int(21, "Long", minval = 2, group = "Trend Scouter", inline = "trend_lengths")
+
+showShortTrend = input.bool(true, "Show", group = "Short Trend", inline = "short_show")
+shortTrendExtend = input.bool(true, "Extend", group = "Short Trend", inline = "short_show")
+shortTrendFrom = input.string("Back", "From", options = ["Front", "Mid", "Back"], group = "Short Trend", inline = "short_points")
+shortTrendTo = input.string("Mid", "To", options = ["Front", "Mid", "Back"], group = "Short Trend", inline = "short_points")
+shortTrendStyleInput = input.string("Solid", "Style", options = ["Solid", "Dashed", "Dotted"], group = "Short Trend", inline = "short_style")
+shortTrendWidth = input.int(4, "Width", minval = 1, maxval = 5, group = "Short Trend", inline = "short_style")
+shortTrendExtensionStyleInput = input.string("Dashed", "Extension Style", options = ["Solid", "Dashed", "Dotted"], group = "Short Trend")
+shortTrendUpColor = input.color(color.new(color.blue, 10), "Up", group = "Short Trend", inline = "short_colors")
+shortTrendDownColor = input.color(color.new(color.orange, 10), "Down", group = "Short Trend", inline = "short_colors")
+
+showLongTrend = input.bool(true, "Show", group = "Long Trend", inline = "long_show")
+longTrendExtend = input.bool(true, "Extend", group = "Long Trend", inline = "long_show")
+longTrendFrom = input.string("Back", "From", options = ["Front", "Mid", "Back"], group = "Long Trend", inline = "long_points")
+longTrendTo = input.string("Mid", "To", options = ["Front", "Mid", "Back"], group = "Long Trend", inline = "long_points")
+longTrendStyleInput = input.string("Solid", "Style", options = ["Solid", "Dashed", "Dotted"], group = "Long Trend", inline = "long_style")
+longTrendWidth = input.int(4, "Width", minval = 1, maxval = 5, group = "Long Trend", inline = "long_style")
+longTrendExtensionStyleInput = input.string("Dashed", "Extension Style", options = ["Solid", "Dashed", "Dotted"], group = "Long Trend")
+longTrendUpColor = input.color(color.new(color.green, 10), "Up", group = "Long Trend", inline = "long_colors")
+longTrendDownColor = input.color(color.new(color.red, 10), "Down", group = "Long Trend", inline = "long_colors")
+
+showCustomTrendTop = input.bool(false, "Top", group = "Custom Trend", inline = "custom_show")
+showCustomTrendBottom = input.bool(false, "Bottom", group = "Custom Trend", inline = "custom_show")
+customTrendExtend = input.bool(false, "Extend", group = "Custom Trend", inline = "custom_show")
+customTopFromGroup = input.string("Long", "Top", options = ["Long", "Short"], group = "Custom Trend", inline = "custom_top_from")
+customTopFromPair = input.string("Mid", "", options = ["Front", "Mid", "Back"], group = "Custom Trend", inline = "custom_top_from")
+customTopToGroup = input.string("Short", "→", options = ["Long", "Short"], group = "Custom Trend", inline = "custom_top_to")
+customTopToPair = input.string("Mid", "", options = ["Front", "Mid", "Back"], group = "Custom Trend", inline = "custom_top_to")
+customBottomFromGroup = input.string("Long", "Bottom", options = ["Long", "Short"], group = "Custom Trend", inline = "custom_bottom_from")
+customBottomFromPair = input.string("Mid", "", options = ["Front", "Mid", "Back"], group = "Custom Trend", inline = "custom_bottom_from")
+customBottomToGroup = input.string("Short", "→", options = ["Long", "Short"], group = "Custom Trend", inline = "custom_bottom_to")
+customBottomToPair = input.string("Mid", "", options = ["Front", "Mid", "Back"], group = "Custom Trend", inline = "custom_bottom_to")
+customTrendStyleInput = input.string("Solid", "Style", options = ["Solid", "Dashed", "Dotted"], group = "Custom Trend", inline = "custom_style")
+customTrendWidth = input.int(2, "Width", minval = 1, maxval = 5, group = "Custom Trend", inline = "custom_style")
+customTrendExtensionStyleInput = input.string("Dashed", "Extension Style", options = ["Solid", "Dashed", "Dotted"], group = "Custom Trend")
+customTrendUpColor = input.color(color.new(#673ab7, 10), "Up", group = "Custom Trend", inline = "custom_colors")
+customTrendDownColor = input.color(color.new(color.purple, 10), "Down", group = "Custom Trend", inline = "custom_colors")
+
+
+showDailyPsy = input.bool(true, "Show Daily Psy" , inline = "DailyPsy")
+dailyPsyHi = input.color(color.rgb(0, 156, 81) , "DailyPsyHi", inline = "DailyPsy")
+dailyPsyLo = input.color(color.rgb(156, 0, 78) , "DailyPsyLo", inline = "DailyPsy")
+textColor = input.color(color.white, "Text Color", inline = "DailyPsy")
+
+aDRRange = input.int(group='Average Daily Range - ADR', title='ADR length (days)?', defval=14, minval=1, maxval=31, step=1, inline='adr2', tooltip="Defaults taken from mt4. This defines how many days back to take into consideration when calculating the ADR")
+
+bool showPsy =  timeframe.isintraday
+//────────────────────
+// PSY LEVELS (WEEKLY 1m–1H)
+//────────────────────
+show_psylevels = input.bool(
+    true,
+    "Levels",
+    group  = "Weekly 1m–1H",
+    inline = "psy_toggle"
+) and showPsy
+
+show_psylabel = input.bool(
+    true,
+    "Labels",
+    group  = "Weekly 1m–1H",
+    inline = "psy_toggle",
+    tooltip = "Psy High/Low only appears on 1H, 30m, 15m, 5m, 3m, 1m.\nDisabled on other TFs due to Sydney/Tokyo session alignment."
+) and show_psylevels
+
+showallPsy = input.bool(
+    false,
+    "History",
+    group  = "Weekly 1m–1H",
+    inline = "psy_toggle"
+) and show_psylevels
+
+
+psycolH = input.color(
+    color.new(color.orange, 30),
+    "High",
+    group  = "Weekly 1m–1H",
+    inline = "psy_color"
+)
+
+psycolL = input.color(
+    color.new(color.orange, 30),
+    "Low",
+    group  = "Weekly 1m–1H",
+    inline = "psy_color"
+)
+
+
+
+//────────────────────
+// VCZ SETTINGS
+//────────────────────
+showVCZ = input.bool(true, "VCZ", group="VCZ")
+
+zonesMax = input.int(20, "Max Zones", group="VCZ")
+
+transperancy = input.int(90, "Transparency", minval=0, maxval=100, group="VCZ", tooltip="90% transparency equals 10% opacity.")
+
+zoneUpdateType = input.string(
+     "Body with wicks",
+     "Update Type",
+     options = ["Body with wicks"],
+     group="VCZ"
+)
+
+zoneType = input.string(
+     "Body with wicks",
+     "Zone Type",
+     options = ["Body with wicks"],
+     group="VCZ"
+)
+
+borderWidth = input.int(1, "Border Width", group="VCZ")
+
+colorOverride = input.bool(false, "Override Color", group="VCZ")
+
+zoneColor = input.color(color.orange, "Zone Color", group="VCZ")
+
+
+
+
+
+// === Auto-detect psyType based on symbol type
+psyType = syminfo.type == "crypto" ? "crypto" : "forex"
+
+//────────────────────
+// PIVOT SETTINGS (INLINE)
+//────────────────────
+showPivot = input.bool(
+    false,
+    "Pivot",
+    group  = "Pivot",
+    inline = "pivot_toggle"
+)
+
+pivotPt = input.color(
+    color.blue,
+    "P+D0",
+    group  = "Pivot",
+    inline = "pivot_colors"
+)
+
+pivotPt2 = input.color(
+    color.rgb(18, 61, 97),
+    "P+D1",
+    group  = "Pivot",
+    inline = "pivot_colors"
+)
+
+pivotRes = input.color(
+    color.red,
+    "Res",
+    group  = "Pivot",
+    inline = "pivot_colors"
+)
+
+pivotSup = input.color(
+    color.green,
+    "Sup",
+    group  = "Pivot",
+    inline = "pivot_colors"
+)
+
+
+
+
+//────────────────────
+// FUNCTIONS
+//────────────────────
+getDonchian(len, src) =>
+    (ta.lowest(src, len) + ta.highest(src, len)) / 2.0
+
+getLeadLine1(a, b) =>
+    (a + b) / 2.0
+
+
+// === Get OHLC from specific daily bar
+getOHLC(tf, offset) =>
+    o = request.security(syminfo.tickerid, tf, open[offset], lookahead = barmerge.lookahead_on)
+    h = request.security(syminfo.tickerid, tf, high[offset], lookahead = barmerge.lookahead_on)
+    l = request.security(syminfo.tickerid, tf, low[offset], lookahead = barmerge.lookahead_on)
+    c = request.security(syminfo.tickerid, tf, close[offset], lookahead = barmerge.lookahead_on)
+    [o,h, l, c]
+
+// === Calculate Pivot from OHLC
+calcPivot(o,h, l, c) =>
+    pp = (h + l + c) / 3
+    r1 = 2 * pp - l
+    s1 = 2 * pp - h
+    r2 = pp + (h - l)
+    s2 = pp - (h - l)
+    r3 = h + 2 * (pp - l)
+    s3 = l - 2 * (h - pp)
+    [pp, r1, s1, r2, s2, r3, s3]
+
+
+label_x_offset = time_close + 5 * timeframe.multiplier * 60 * 1000
+
+
+r_label(ry, rtext, rstyle, rcolor, valid) =>
+    var label rLabel = na
+    if valid and barstate.isrealtime
+        rLabel := label.new(x=label_x_offset, y=ry, text=rtext, xloc=xloc.bar_time, style=rstyle, textcolor=rcolor, textalign=text.align_right)
+        label.delete(rLabel[1])
+    rLabel
+
+
+
+
+
+//────────────────────
+// VCZ FUNCTIONS
+//────────────────────
+
+getPvsraFlagByColor(
+     pvsraColor,
+     redVectorColor,
+     greenVectorColor,
+     violetVectorColor,
+     blueVectorColor,
+     lightGrayCandleColor
+ ) =>
+
+    if pvsraColor == greenVectorColor
+        3
+    else if pvsraColor == redVectorColor
+        -3
+    else if pvsraColor == blueVectorColor
+        2
+    else if pvsraColor == violetVectorColor
+        -2
+    else if pvsraColor == lightGrayCandleColor
+        1
+    else
+        -1
+
+
+
+cleanarr(arr) =>
+    if array.size(arr) > 0
+        for i = array.size(arr) - 1 to 0
+            if na(array.get(arr, i))
+                array.remove(arr, i)
+
+
+
+updateZones(
+     pvsra,
+     direction,
+     boxArr,
+     maxlevels,
+     pvsraHigh,
+     pvsraLow,
+     pvsraOpen,
+     pvsraClose,
+     transperancy,
+     zoneupdatetype,
+     zonecolor,
+     zonetype,
+     borderwidth,
+     coloroverride,
+     redVectorColor,
+     greenVectorColor,
+     violetVectorColor,
+     blueVectorColor
+ ) =>
+
+    levelclose = pvsraClose[1]
+    levelopen  = pvsraOpen[1]
+    levelhigh  = pvsraHigh[1]
+    levellow   = pvsraLow[1]
+
+    length = array.size(boxArr)
+
+    CUColorBG = color.new(greenVectorColor, transperancy)
+    CDColorBG = color.new(redVectorColor, transperancy)
+    AUColorBG = color.new(blueVectorColor, transperancy)
+    ADColorBG = color.new(violetVectorColor, transperancy)
+
+    bgColor =
+         coloroverride ? zonecolor :
+         pvsra == 2 ? AUColorBG :
+         pvsra == -2 ? ADColorBG :
+         pvsra == 3 ? CUColorBG :
+         pvsra == -3 ? CDColorBG :
+         na
+
+    if (pvsra[1] < -1 or pvsra[1] > 1)
+
+        top =
+             levelclose > levelopen
+             ? (zonetype == 'Body with wicks' ? levelhigh : levelclose)
+             : (zonetype == 'Body with wicks' ? levelhigh : levelopen)
+
+        bottom =
+             levelclose > levelopen
+             ? (zonetype == 'Body with wicks' ? levellow : levelopen)
+             : (zonetype == 'Body with wicks' ? levellow : levelclose)
+
+        array.unshift(
+             boxArr,
+             box.new(
+                 left = bar_index[1],
+                 top = top,
+                 right = bar_index,
+                 bottom = bottom,
+                 extend = extend.right,
+                 bgcolor = bgColor[1],
+                 border_width = borderwidth,
+                 border_color = color.rgb(255,255,255,80)
+             )
+         )
+
+        length += 1
+
+    if length > 0
+
+        for i = 0 to length - 1
+
+            valbox = array.get(boxArr, i)
+
+            if not na(valbox)
+
+                valbottom = box.get_bottom(valbox)
+                valtop    = box.get_top(valbox)
+
+                if direction == 1
+
+                    if pvsraClose >= valtop or pvsraHigh >= valtop
+                        box.delete(valbox)
+                        array.set(boxArr, i, na)
+
+                    else if pvsraHigh > valbottom and pvsraHigh < valtop
+                        box.set_bottom(valbox, pvsraHigh)
+
+                    else if pvsraClose > valbottom and pvsraClose < valtop
+                        box.set_bottom(valbox, pvsraClose)
+
+                else
+
+                    if pvsraClose <= valbottom or pvsraLow <= valbottom
+                        box.delete(valbox)
+                        array.set(boxArr, i, na)
+
+                    else if pvsraLow > valbottom and pvsraLow < valtop
+                        box.set_top(valbox, pvsraLow)
+
+                    else if pvsraClose > valbottom and pvsraClose < valtop
+                        box.set_top(valbox, pvsraClose)
+
+    if length > maxlevels
+
+        val = array.get(boxArr, length - 1)
+
+        if not na(val)
+            box.delete(val)
+
+        array.pop(boxArr)
+
+
+//────────────────────
+// TREND SCOUTER FUNCTIONS
+// Each swing occupies three array slots: price, time and source price.
+//────────────────────
+addTrendPoint(array<float> bag, float value, int pointTime, float pointSource) =>
+    array.unshift(bag, pointSource)
+    array.unshift(bag, float(pointTime))
+    array.unshift(bag, value)
+    if array.size(bag) > 21
+        array.pop(bag)
+        array.pop(bag)
+        array.pop(bag)
+    0.0
+
+updateTrendPoint(array<float> bag, float value, int pointTime, float pointSource, int direction) =>
+    if array.size(bag) == 0
+        addTrendPoint(bag, value, pointTime, pointSource)
+    else if not na(value) and ((direction == 1 and value > array.get(bag, 0)) or (direction == -1 and value < array.get(bag, 0)))
+        array.set(bag, 0, value)
+        array.set(bag, 1, float(pointTime))
+        array.set(bag, 2, pointSource)
+    0.0
+
+getTrendCoord(array<float> bag, string position, string selection, bool useSource) =>
+    int firstOffset = selection == "Front" ? 0 : selection == "Mid" ? 6 : 12
+    int secondOffset = firstOffset + 3
+    float firstY = array.size(bag) > secondOffset + 2 ? array.get(bag, firstOffset + (useSource ? 2 : 0)) : na
+    float secondY = array.size(bag) > secondOffset + 2 ? array.get(bag, secondOffset + (useSource ? 2 : 0)) : na
+    int firstX = array.size(bag) > secondOffset + 2 ? int(math.round(array.get(bag, firstOffset + 1))) : na
+    int secondX = array.size(bag) > secondOffset + 2 ? int(math.round(array.get(bag, secondOffset + 1))) : na
+    bool selectFirst = position == "top" ? firstY >= secondY : firstY <= secondY
+    [selectFirst ? firstX : secondX, selectFirst ? firstY : secondY]
+
+getTrendLineStyle(string styleInput) =>
+    styleInput == "Solid" ? line.style_solid : styleInput == "Dashed" ? line.style_dashed : line.style_dotted
+
+drawTrendLine(bool visible, int x1, float y1, int x2, float y2, bool extendLine, color lineColor, string styleInput, int lineWidth) =>
+    visible and not na(x1) and not na(y1) and not na(x2) and not na(y2) ? line.new(x1, y1, x2, y2, xloc = xloc.bar_time, extend = extendLine ? extend.right : extend.none, color = lineColor, style = getTrendLineStyle(styleInput), width = lineWidth) : na
+
+
+
+//────────────────────
+// POSITION STATE MACHINE
+//────────────────────
+enum Position
+    FLAT
+    LONG
+    SHORT
+
+get_candle_time_str(timestamp) =>
+    yr = str.tostring(year(timestamp))
+    mo = str.tostring(month(timestamp), '00')
+    dy = str.tostring(dayofmonth(timestamp), '00')
+    hr = str.tostring(hour(timestamp), '00')
+    mn = str.tostring(minute(timestamp), '00')
+    sc = str.tostring(second(timestamp), '00')
+    yr + '-' + mo + '-' + dy + 'T' + hr + ':' + mn + ':' + sc + 'Z'
+
+
+send_alert(
+    _symbol,
+    _candle_time,
+    Position _deal_type,
+    string _signal_type,
+    _open,
+    _close,
+    _high,
+    _low,
+    _volume,
+    _timeframe,
+    _price
+) =>
+    candle_time_str = get_candle_time_str(_candle_time)
+
+    chart_url = (
+        "https://www.tradingview.com/chart/?" +
+        "symbol=" + str.replace_all(syminfo.tickerid, ":", "%3A") +
+        "&interval=" + timeframe.period
+    )
+
+    embedColor =
+         _deal_type == Position.LONG ? 5763719 :
+         _deal_type == Position.SHORT ? 15548997 :
+         9807270
+
+    directionIcon =
+         _deal_type == Position.LONG ? "🟢📈" :
+         _deal_type == Position.SHORT ? "🔴📉" :
+         "⚪➡️"
+
+    json_payload = (
+        "{" +
+        "\"content\":\"" + directionIcon + " **Cloudgazer Signal**\"," +
+        "\"embeds\":[" +
+        "{" +
+        "\"title\":\"" + directionIcon + " " + _symbol + " - " + _signal_type + "\"," +
+        "\"url\":\"" + chart_url + "\"," +
+        "\"color\":" + str.tostring(embedColor) + "," +
+        "\"fields\":[" +
+        "{\"name\":\"Direction\",\"value\":\"" + directionIcon + " " + str.tostring(_deal_type) + "\",\"inline\":true}," +
+        "{\"name\":\"Timeframe\",\"value\":\"" + _timeframe + "\",\"inline\":true}," +
+        "{\"name\":\"Close\",\"value\":\"" + str.tostring(_close) + "\",\"inline\":true}," +
+        "{\"name\":\"Open\",\"value\":\"" + str.tostring(_open) + "\",\"inline\":true}," +
+        "{\"name\":\"High\",\"value\":\"" + str.tostring(_high) + "\",\"inline\":true}," +
+        "{\"name\":\"Low\",\"value\":\"" + str.tostring(_low) + "\",\"inline\":true}," +
+        "{\"name\":\"Volume\",\"value\":\"" + str.tostring(_volume) + "\",\"inline\":true}," +
+        "{\"name\":\"VWAP\",\"value\":\"" + str.tostring(_price) + "\",\"inline\":true}," +
+        "{\"name\":\"Candle Time\",\"value\":\"" + candle_time_str + "\",\"inline\":false}," +
+        "{\"name\":\"Chart\",\"value\":\"" + chart_url + "\",\"inline\":false}" +
+        "]" +
+        "}" +
+        "]," +
+        "\"cloudgazer\":{" +
+        "\"symbol\":\"" + _symbol + "\"," +
+        "\"timeframe\":\"" + _timeframe + "\"," +
+        "\"direction\":\"" + str.tostring(_deal_type) + "\"," +
+        "\"signal\":\"" + _signal_type + "\"," +
+        "\"open\":" + str.tostring(_open) + "," +
+        "\"high\":" + str.tostring(_high) + "," +
+        "\"low\":" + str.tostring(_low) + "," +
+        "\"close\":" + str.tostring(_close) + "," +
+        "\"volume\":" + str.tostring(_volume) + "," +
+        "\"vwap\":" + str.tostring(_price) + "," +
+        "\"candle_time\":\"" + candle_time_str + "\"" +
+        "}" +
+        "}"
+    )
+
+    alert(json_payload, alert.freq_once_per_bar_close)
+
+ 
+
+
+//────────────────────
+// ICHIMOKU CORE
+//────────────────────
+tenkan = getDonchian(tenkansen, close)
+kijun  = getDonchian(kijunsen, close)
+spanA  = getLeadLine1(tenkan, kijun)
+spanB  = getDonchian(senko, close)
+
+
+[o1,h1,l1,c1] = getOHLC("D", 1)
+[o0, h0, l0, c0] = getOHLC("D", 0)
+
+
+[pp, r1, s1, r2, s2, r3, s3] = calcPivot(o1,h1,l1,c1)
+
+pp_tomorrow = (h0 + l0 + c0) / 3
+
+adr = request.security(
+    syminfo.tickerid,
+    "D",
+    ta.sma(high - low, 14)
+)
+
+
+
+//────────────────────
+// PVSRA + VWAP DISPLACEMENT
+//────────────────────
+
+// === COLORS
+greenVectorColor  = color.rgb(0, 156, 81)
+redVectorColor    = color.rgb(114, 0, 0)
+
+blueVectorColor   = color.rgb(0, 96, 175)
+violetVectorColor = color.rgb(197, 70, 219)
+
+bullColor         = color.rgb(140, 161, 142)
+bearColor         = color.rgb(150, 119, 119)
+
+//────────────────────
+// BASE METRICS
+//────────────────────
+
+// Volume baseline
+volMA = ta.sma(volume, volLen)
+
+// Spread baseline
+spread = high - low
+spreadMA = ta.sma(spread, volLen)
+
+// VWAP
+hlcVwap = ta.vwap(hlc3)
+
+// Distance from VWAP
+vwapDistance =
+     math.abs(close - hlcVwap)
+
+// Average VWAP displacement
+vwapDistanceMA =
+     ta.sma(vwapDistance, volLen)
+
+//────────────────────
+// BULL / BEAR
+//────────────────────
+isBull = close > open
+isBear = close < open
+
+// A bullish engulfing candle is bullish and its real body fully covers the
+// previous bearish real body. A bearish engulfing candle is the inverse.
+bullishEngulfing =
+     isBull and
+     isBear[1] and
+     open <= close[1] and
+     close >= open[1]
+
+bearishEngulfing =
+     isBear and
+     isBull[1] and
+     open >= close[1] and
+     close <= open[1]
+
+//────────────────────
+// VECTOR CONDITIONS
+//────────────────────
+
+// Strong volume
+isClimaxVolume =
+     volume >= volMA * climaxMul
+
+// Medium volume
+isAboveVolume =
+     volume >= volMA * aboveMul
+
+// Strong candle expansion
+isSpreadExpansion =
+     spread >= spreadMA * 1.5
+
+// Strong displacement from value
+isVwapExpansion =
+     vwapDistance >= vwapDistanceMA * 1.5
+
+//────────────────────
+// FINAL VECTOR LOGIC
+//────────────────────
+
+// Strong vector
+isClimax =
+     isClimaxVolume and
+     (isSpreadExpansion or isVwapExpansion)
+
+// Medium vector
+isAbove =
+     not isClimax and
+     isAboveVolume
+
+//────────────────────
+// PVSRA COLOR
+//────────────────────
+pvsraColor =(
+     isClimax and isBull ? greenVectorColor :
+     isClimax and isBear ? redVectorColor :
+
+     isAbove and isBull  ? blueVectorColor :
+     isAbove and isBear  ? violetVectorColor :
+
+     isBull              ? bullColor :
+     isBear              ? bearColor :
+                            na)
+
+//────────────────────
+// APPLY COLORS
+//────────────────────
+engulfingColor =
+     showEngulfing and bullishEngulfing ? engulfingBuyColor :
+     showEngulfing and bearishEngulfing ? engulfingSellColor :
+     pvsraColor
+
+barcolor(engulfingColor)
+
+// Available in TradingView's alert-condition menu.
+alertcondition(bullishEngulfing, "Bullish Engulfing", "Bullish engulfing candle on {{ticker}} {{interval}}")
+alertcondition(bearishEngulfing, "Bearish Engulfing", "Bearish engulfing candle on {{ticker}} {{interval}}")
+
+
+
+
+//────────────────────
+// ICHIMOKU PLOTS
+//────────────────────
+plot(tenkan,
+     color = color.new(tenkanColor, 40),
+     linewidth = 2,
+     title = "Tenkan")
+
+plot(kijun,
+     color = color.new(kijunColor, 40),
+     linewidth = 2,
+     title = "Kijun")
+
+p1 = plot(spanA,
+          offset = kijunsen - 1,
+          color = color.new(spanAColor, 40),
+          title = "Span A")
+
+p2 = plot(spanB,
+          offset = kijunsen - 1,
+          color = color.new(spanBColor, 40),
+          title = "Span B")
+
+fill(
+    p1, p2,
+    spanA > spanB
+        ? color.new(cloudBullColor, 85)
+        : color.new(cloudBearColor, 85)
+)
+
+plot(close,
+     offset = -kijunsen + 1,
+     color = color.new(chikouColor, 40),
+     title = "Chikou")
+
+
+
+
+
+
+
+// Fetch today's high from the daily timeframe
+today_high = request.security(syminfo.tickerid, "D", high, lookahead=barmerge.lookahead_on)
+today_low = request.security(syminfo.tickerid, "D", low, lookahead=barmerge.lookahead_on)
+
+week_high = request.security(syminfo.tickerid, "W", high, lookahead=barmerge.lookahead_on)
+week_low = request.security(syminfo.tickerid, "W", low, lookahead=barmerge.lookahead_on)
+
+
+plot(showDailyPsy ? today_high : na,
+     title = "Daily Hi",
+     color = color.new(dailyPsyHi, 50),
+     linewidth = 2,
+     style = plot.style_linebr)
+
+plot(showDailyPsy ? today_low : na,
+     title = "Daily Lo",
+     color = color.new(dailyPsyLo, 50),
+     linewidth = 2,
+     style = plot.style_linebr)
+
+plot(showDailyPsy ? week_high : na,
+     title = "Weekly Hi",
+     color = color.new(dailyPsyHi, 60),
+     linewidth = 2,
+     style = plot.style_linebr)
+
+plot(showDailyPsy ? week_low : na,
+     title = "Weekly Lo",
+     color = color.new(dailyPsyLo, 60),
+     linewidth = 2,
+     style = plot.style_linebr)
+
+
+var label todayHighLabel = na
+var label todayLowLabel = na
+var label weekHighLabel = na
+var label weekLowLabel = na
+
+if (not na(todayHighLabel))
+    label.delete(todayHighLabel)
+
+if (not na(todayLowLabel))
+    label.delete(todayLowLabel)
+
+
+if (not na(weekHighLabel))
+    label.delete(weekHighLabel)
+    
+if (not na(weekLowLabel))
+    label.delete(weekLowLabel)
+
+
+if (showDailyPsy)
+    todayHighLabel := label.new(x=bar_index, y=today_high, text="Today High", color=dailyPsyHi, textcolor=textColor, style=label.style_none)
+    todayLowLabel := label.new(x=bar_index, y=today_low, text="Today Low", color=dailyPsyLo, textcolor=textColor, style=label.style_none)
+    weekHighLabel := label.new(x=bar_index - 20, y=week_high, text="Week High", color=dailyPsyHi, textcolor=textColor, style=label.style_none)
+    weekLowLabel := label.new(x=bar_index - 20, y=week_low, text="Week Low", color=dailyPsyLo, textcolor=textColor, style=label.style_none)
+
+
+
+
+var line[] lines = array.new_line(8, na)
+
+levels = array.from(pp, r1, s1, r2, s2, r3, s3, pp_tomorrow)
+colors = array.from(pivotPt, pivotRes, pivotSup, pivotRes, pivotSup, pivotRes, pivotSup, pivotPt2)
+
+isNewDay = ta.change(time("D")) != 0
+var int dayStartBar = na
+
+if isNewDay
+    dayStartBar := bar_index
+dayStartBar := na(dayStartBar) ? bar_index : dayStartBar
+
+for i = 0 to 7
+    float lvl = array.get(levels, i)
+    color col = array.get(colors, i)
+
+    l = array.get(lines, i)
+    
+
+    if showPivot
+        if na(l)
+            // ✅ create ONLY once
+            l := line.new(
+                x1 = dayStartBar,
+                y1 = lvl,
+                x2 = bar_index,
+                y2 = lvl,
+                extend = extend.none,
+                color = col,
+                style = line.style_dashed,
+                width = 3
+            )
+        else
+            // ✅ just update position
+            line.set_xy1(l, dayStartBar, lvl)
+            line.set_xy2(l, bar_index, lvl)
+            line.set_color(l, col)
+            line.set_width(l, 3)
+
+        array.set(lines, i, l)
+
+    else
+        // ✅ only delete when turning OFF
+        if not na(l)
+            line.delete(l)
+            array.set(lines, i, na)
+        
+
+    
+
+plot(hlcVwap, style = plot.style_stepline_diamond, color=color.rgb(201,55,86,50) , title = "VWAP")
+
+
+
+
+//************//
+// Psy Levels //
+//************//
+
+
+
+
+int previousSunday = dayofmonth - dayofweek + 1
+bool nyDST = false
+bool ukDST = false
+bool sydDST = false
+
+if month < 3 or month > 11
+    nyDST := false
+    ukDST := false
+    sydDST := true
+else if month > 4 and month < 10
+    nyDST := true
+    ukDST := true
+    sydDST := false
+else if month == 3
+    nyDST := previousSunday >= 8
+    ukDST := previousSunday >= 24
+    sydDST := true
+else if month == 4
+    nyDST := true
+    ukDST := true
+    sydDST := previousSunday <= 0
+else if month == 10
+    nyDST := true
+    ukDST := previousSunday <= 24
+    sydDST := previousSunday >= 0
+else // month == 11
+    nyDST := previousSunday <= 0
+    ukDST := false
+    sydDST := true
+    
+
+var int oneWeekMillis = (7 * 24 * 60 * 60 * 1000)
+
+// Timestamp any of the 6 previous days in the week (such as last Wednesday at 21 hours GMT)
+timestampPreviousDayOfWeek(previousDayOfWeek, hourOfDay, GMTOffset) =>
+    int dayofweekOffset = na
+    int previousDayOfMonth = na
+    int psySessionStartTime = na
+    int returnValue = na
+    //today we onlu care about Monday - forec and Saturday for crypto - if that changes in the future this code will need to be updated
+    if previousDayOfWeek == "Monday"
+        dayofweekOffset := (dayofweek(time, GMTOffset) - 1 + 6) % 7
+    
+    if previousDayOfWeek == "Saturday"
+        dayofweekOffset := (dayofweek(time, GMTOffset) - 1 + 1) % 7
+
+
+    previousDayOfMonth := dayofmonth(time, GMTOffset) - dayofweekOffset
+    
+    //based on time we are on the day where the psy levels will change - now we need to determine if we are before or after the 
+    //time when the psy levels will chnge
+    
+    //today is Saturday or Monday dayofweekOffset will be equal to zero and we are checking if the current time is before the psy level change
+    //we also need to be minful of GMTOffset. using  and hourOfDay != 00 because if we switch at midnight we dont have to do anything
+    if dayofweekOffset == 0 and GMTOffset == "GMT" and hourOfDay >= hour(time,GMTOffset) and hourOfDay != 00
+        //even thou today is saturday we are still not past the change time - subract a week because it is not time to change yet
+        returnValue := timestamp(GMTOffset, year, month, previousDayOfMonth, hourOfDay, 00, 00) - oneWeekMillis
+    //same as previous but handling GMT+1
+    else if dayofweekOffset == 0 and GMTOffset == "GMT+1" and hourOfDay -1 >= hour(time,GMTOffset) //and 0 != minute(time,GMTOffset)
+        returnValue := timestamp(GMTOffset, year, month, previousDayOfMonth, hourOfDay, 00, 00) - oneWeekMillis
+    //default - we have already switched some time ago
+    else
+        returnValue := timestamp(GMTOffset, year, month, previousDayOfMonth, hourOfDay, 00, 00)
+    returnValue
+
+
+
+int psySession = na 
+int psySessionStartDay = na
+int psySessionStartTime = na
+bool inPsySession = false
+float psyHi = na
+float psyLo = na
+string psyHiLabel = na
+string psyLoLabel = na
+//only do the calc if the user has not disabled the psy levels
+
+
+
+if psyType == 'crypto'
+    if sydDST
+        psySession := time('240', '2200-0600:1', "GMT+1")
+        psySessionStartTime := timestampPreviousDayOfWeek('Saturday', 22, 'GMT+1')
+    else
+        psySession := time('240', '2200-0600:1', "GMT")
+        psySessionStartTime := timestampPreviousDayOfWeek('Saturday', 22, 'GMT')
+else
+    psySession := time('240', '0000-0800:2', "GMT")
+    psySessionStartTime := timestampPreviousDayOfWeek('Monday', 00, 'GMT')
+        
+inPsySession := na(psySession) ? false : true
+if inPsySession
+    // When entering a new psy session, initialize hi/lo
+    if not inPsySession[1]
+        psyHi := high
+        psyLo := low
+        psyHiLabel := 'Psy-Hi calculating...'
+        psyLoLabel := 'Psy-Lo calculating...'
+    // After initialization, calculate psy hi/lo
+    else
+        psyHi := math.max(high, psyHi[1])
+        psyLo := math.min(low, psyLo[1])
+        //stylePsy := line.style_dashed //this does not work for style correctly but it does for the label which is odd
+        psyHiLabel := 'Psy-Hi calculating...'
+        psyLoLabel := 'Psy-Lo calculating...'
+    // When not in the psy session, use the last value of psyHi and psyLo
+else
+    psyHi := psyHi[1]
+    psyLo := psyLo[1]
+    psyHiLabel := 'Psy-Hi'
+    psyLoLabel := 'Psy-Lo'
+
+
+
+
+// === Check if price is inside range
+inRange = close <= psyHi and close >= psyLo
+belowRange = close < psyLo
+aboveRange = close > psyHi
+float fibBaseLow  = na
+float fibBaseHigh = na
+
+// === Assign FIRST
+if inRange
+    fibBaseLow  := psyLo
+    fibBaseHigh := psyHi
+
+else if belowRange
+    fibBaseLow  := today_low
+    fibBaseHigh := psyLo
+
+else if aboveRange
+    fibBaseLow  := psyHi
+    fibBaseHigh := today_high
+
+// === THEN calculate
+fibRange = fibBaseHigh - fibBaseLow
+
+fib_618 = fibBaseLow + fibRange * 0.618
+fib_50  = fibBaseLow + fibRange * 0.5
+
+
+var line psyfib618 = na
+var line psyfib50  = na
+
+// === VALIDATION
+validFib =
+     not na(fibBaseLow) and
+     not na(fibBaseHigh) and
+     fibBaseHigh != fibBaseLow
+
+// Draw Psy Level Lines
+if (barstate.islast) and not showallPsy and show_psylevels
+    
+    psyHiLine = line.new(time, psyHi, psySessionStartTime, psyHi, xloc.bar_time, extend.none, psycolH)
+    line.delete(psyHiLine[1])
+    
+    psyLoLine = line.new(time, psyLo, psySessionStartTime, psyLo, xloc.bar_time, extend.none, psycolL)
+    line.delete(psyLoLine[1])
+
+    // === Define colors properly
+    fibColor618 = (
+         inRange     ? color.orange :
+         belowRange  ? color.red :
+         aboveRange  ? color.lime :
+         color.gray )
+
+    fibColor50 = (
+         inRange     ? color.yellow :
+         belowRange  ? color.maroon :
+         aboveRange  ? color.green :
+         color.gray)
+
+    if validFib and barstate.islast
+        line.delete(psyfib618)
+        line.delete(psyfib50)
+
+        psyfib618 := line.new(time, fib_618, psySessionStartTime, fib_618, xloc.bar_time, extend.none, color=fibColor618)
+        psyfib50  := line.new(time, fib_50,  psySessionStartTime, fib_50,  xloc.bar_time, extend.none, color=fibColor50)
+
+// Write Psy Level Labels - same label regardless if line.new or plot used
+r_label(psyHi, psyHiLabel, label.style_none, psycolH, show_psylabel)
+r_label(psyLo, psyLoLabel, label.style_none, psycolL, show_psylabel) 
+
+// Plot Historical Psy Level
+plot(showPsy and show_psylevels and showallPsy ? psyHi : na, color=psycolH, style=plot.style_stepline, linewidth=2, editable=false, title="Psy-Hi")  //, offset=psy_plot_offset)
+plot(showPsy and show_psylevels and showallPsy ? psyLo : na, color=psycolL, style=plot.style_stepline, linewidth=2, editable=false, title="Psy-Lo")  //, offset=psy_plot_offset)
+
+
+//────────────────────
+// TREND SCOUTER CHANNEL ENGINE
+//────────────────────
+bool useTrendSource = trendCoords == "Source"
+float trendHighSource = useTrendSource ? trendSource : high
+float trendLowSource = useTrendSource ? trendSource : low
+
+var array<float> shortTrendBag = array.new_float()
+var array<float> longTrendBag = array.new_float()
+var int shortTrendDirection = 0
+var int longTrendDirection = 0
+
+float shortHighCoord = ta.highestbars(trendHighSource, shortTrendLength) == 0 ? trendHighSource : na
+float shortLowCoord = ta.lowestbars(trendLowSource, shortTrendLength) == 0 ? trendLowSource : na
+float longHighCoord = ta.highestbars(trendHighSource, longTrendLength) == 0 ? trendHighSource : na
+float longLowCoord = ta.lowestbars(trendLowSource, longTrendLength) == 0 ? trendLowSource : na
+
+bool newShortHigh = not na(shortHighCoord) and na(shortLowCoord)
+bool newShortLow = not na(shortLowCoord) and na(shortHighCoord)
+bool newLongHigh = not na(longHighCoord) and na(longLowCoord)
+bool newLongLow = not na(longLowCoord) and na(longHighCoord)
+
+shortTrendDirection := newShortHigh ? 1 : newShortLow ? -1 : shortTrendDirection
+longTrendDirection := newLongHigh ? 1 : newLongLow ? -1 : longTrendDirection
+
+bool shortDirectionChanged = not na(shortTrendDirection[1]) and shortTrendDirection != shortTrendDirection[1]
+bool longDirectionChanged = not na(longTrendDirection[1]) and longTrendDirection != longTrendDirection[1]
+float activeShortCoord = shortTrendDirection == 1 ? shortHighCoord : shortLowCoord
+float activeLongCoord = longTrendDirection == 1 ? longHighCoord : longLowCoord
+
+if shortDirectionChanged and not na(activeShortCoord)
+    addTrendPoint(shortTrendBag, activeShortCoord, time, trendSource)
+else
+    updateTrendPoint(shortTrendBag, activeShortCoord, time, trendSource, shortTrendDirection)
+
+if longDirectionChanged and not na(activeLongCoord)
+    addTrendPoint(longTrendBag, activeLongCoord, time, trendSource)
+else
+    updateTrendPoint(longTrendBag, activeLongCoord, time, trendSource, longTrendDirection)
+
+[shortTopFromX, shortTopFromY] = getTrendCoord(shortTrendBag, "top", shortTrendFrom, useTrendSource)
+[shortTopToX, shortTopToY] = getTrendCoord(shortTrendBag, "top", shortTrendTo, useTrendSource)
+[shortBottomFromX, shortBottomFromY] = getTrendCoord(shortTrendBag, "bottom", shortTrendFrom, useTrendSource)
+[shortBottomToX, shortBottomToY] = getTrendCoord(shortTrendBag, "bottom", shortTrendTo, useTrendSource)
+[longTopFromX, longTopFromY] = getTrendCoord(longTrendBag, "top", longTrendFrom, useTrendSource)
+[longTopToX, longTopToY] = getTrendCoord(longTrendBag, "top", longTrendTo, useTrendSource)
+[longBottomFromX, longBottomFromY] = getTrendCoord(longTrendBag, "bottom", longTrendFrom, useTrendSource)
+[longBottomToX, longBottomToY] = getTrendCoord(longTrendBag, "bottom", longTrendTo, useTrendSource)
+
+float shortMidFrom = (shortTopFromY + shortBottomFromY) / 2.0
+float shortMidTo = (shortTopToY + shortBottomToY) / 2.0
+float longMidFrom = (longTopFromY + longBottomFromY) / 2.0
+float longMidTo = (longTopToY + longBottomToY) / 2.0
+color shortChannelColor = shortMidTo > shortMidFrom ? shortTrendUpColor : shortTrendDownColor
+color longChannelColor = longMidTo > longMidFrom ? longTrendUpColor : longTrendDownColor
+
+int customTopFromX = na
+float customTopFromY = na
+int customTopToX = na
+float customTopToY = na
+int customBottomFromX = na
+float customBottomFromY = na
+int customBottomToX = na
+float customBottomToY = na
+
+if customTopFromGroup == "Long"
+    [selectedX, selectedY] = getTrendCoord(longTrendBag, "top", customTopFromPair, useTrendSource)
+    customTopFromX := selectedX
+    customTopFromY := selectedY
+else
+    [selectedX, selectedY] = getTrendCoord(shortTrendBag, "top", customTopFromPair, useTrendSource)
+    customTopFromX := selectedX
+    customTopFromY := selectedY
+
+if customTopToGroup == "Long"
+    [selectedX, selectedY] = getTrendCoord(longTrendBag, "top", customTopToPair, useTrendSource)
+    customTopToX := selectedX
+    customTopToY := selectedY
+else
+    [selectedX, selectedY] = getTrendCoord(shortTrendBag, "top", customTopToPair, useTrendSource)
+    customTopToX := selectedX
+    customTopToY := selectedY
+
+if customBottomFromGroup == "Long"
+    [selectedX, selectedY] = getTrendCoord(longTrendBag, "bottom", customBottomFromPair, useTrendSource)
+    customBottomFromX := selectedX
+    customBottomFromY := selectedY
+else
+    [selectedX, selectedY] = getTrendCoord(shortTrendBag, "bottom", customBottomFromPair, useTrendSource)
+    customBottomFromX := selectedX
+    customBottomFromY := selectedY
+
+if customBottomToGroup == "Long"
+    [selectedX, selectedY] = getTrendCoord(longTrendBag, "bottom", customBottomToPair, useTrendSource)
+    customBottomToX := selectedX
+    customBottomToY := selectedY
+else
+    [selectedX, selectedY] = getTrendCoord(shortTrendBag, "bottom", customBottomToPair, useTrendSource)
+    customBottomToX := selectedX
+    customBottomToY := selectedY
+
+color customTopColor = customTopToY > customTopFromY ? customTrendUpColor : customTrendDownColor
+color customBottomColor = customBottomToY > customBottomFromY ? customTrendUpColor : customTrendDownColor
+
+var line shortTopLine = na
+var line shortBottomLine = na
+var line longTopLine = na
+var line longBottomLine = na
+var line customTopLine = na
+var line customBottomLine = na
+var line shortTopExtension = na
+var line shortBottomExtension = na
+var line longTopExtension = na
+var line longBottomExtension = na
+var line customTopExtension = na
+var line customBottomExtension = na
+
+if barstate.islast
+    line.delete(shortTopLine)
+    line.delete(shortBottomLine)
+    line.delete(longTopLine)
+    line.delete(longBottomLine)
+    line.delete(customTopLine)
+    line.delete(customBottomLine)
+    line.delete(shortTopExtension)
+    line.delete(shortBottomExtension)
+    line.delete(longTopExtension)
+    line.delete(longBottomExtension)
+    line.delete(customTopExtension)
+    line.delete(customBottomExtension)
+
+    shortTopLine := drawTrendLine(showShortTrend, shortTopFromX, shortTopFromY, shortTopToX, shortTopToY, false, shortChannelColor, shortTrendStyleInput, shortTrendWidth)
+    shortBottomLine := drawTrendLine(showShortTrend, shortBottomFromX, shortBottomFromY, shortBottomToX, shortBottomToY, false, shortChannelColor, shortTrendStyleInput, shortTrendWidth)
+    longTopLine := drawTrendLine(showLongTrend, longTopFromX, longTopFromY, longTopToX, longTopToY, false, longChannelColor, longTrendStyleInput, longTrendWidth)
+    longBottomLine := drawTrendLine(showLongTrend, longBottomFromX, longBottomFromY, longBottomToX, longBottomToY, false, longChannelColor, longTrendStyleInput, longTrendWidth)
+    customTopLine := drawTrendLine(showCustomTrendTop, customTopFromX, customTopFromY, customTopToX, customTopToY, false, customTopColor, customTrendStyleInput, customTrendWidth)
+    customBottomLine := drawTrendLine(showCustomTrendBottom, customBottomFromX, customBottomFromY, customBottomToX, customBottomToY, false, customBottomColor, customTrendStyleInput, customTrendWidth)
+
+    shortTopExtension := drawTrendLine(showShortTrend and shortTrendExtend, shortTopFromX, shortTopFromY, shortTopToX, shortTopToY, true, shortChannelColor, shortTrendExtensionStyleInput, shortTrendWidth)
+    shortBottomExtension := drawTrendLine(showShortTrend and shortTrendExtend, shortBottomFromX, shortBottomFromY, shortBottomToX, shortBottomToY, true, shortChannelColor, shortTrendExtensionStyleInput, shortTrendWidth)
+    longTopExtension := drawTrendLine(showLongTrend and longTrendExtend, longTopFromX, longTopFromY, longTopToX, longTopToY, true, longChannelColor, longTrendExtensionStyleInput, longTrendWidth)
+    longBottomExtension := drawTrendLine(showLongTrend and longTrendExtend, longBottomFromX, longBottomFromY, longBottomToX, longBottomToY, true, longChannelColor, longTrendExtensionStyleInput, longTrendWidth)
+    customTopExtension := drawTrendLine(showCustomTrendTop and customTrendExtend, customTopFromX, customTopFromY, customTopToX, customTopToY, true, customTopColor, customTrendExtensionStyleInput, customTrendWidth)
+    customBottomExtension := drawTrendLine(showCustomTrendBottom and customTrendExtend, customBottomFromX, customBottomFromY, customBottomToX, customBottomToY, true, customBottomColor, customTrendExtensionStyleInput, customTrendWidth)
+
+    
+//────────────────────
+// TREND CONTEXT (NON-SIGNAL)
+//────────────────────
+bullConfirmed = close > spanA and close > spanB
+bearConfirmed = close < spanA and close < spanB
+
+//────────────────────
+// EVENTS (ONE-SHOT)
+//────────────────────
+crossUp   = ta.crossover(tenkan, kijun)
+crossDown = ta.crossunder(tenkan, kijun)
+vwapCrossUp = ta.crossover(close, hlcVwap)
+vwapCrossDown = ta.crossunder(close, hlcVwap)
+
+
+
+var Position pos = Position.FLAT
+string labelText = ""
+
+//────────────────────
+// STATE TRANSITIONS
+//────────────────────
+// VWAP events take priority if VWAP and Ichimoku disagree on the same bar.
+if vwapCrossUp
+    if pos != Position.LONG
+        labelText := "BUY"
+        pos := Position.LONG
+
+else if vwapCrossDown
+    if pos != Position.SHORT
+        labelText := "SELL"
+        pos := Position.SHORT
+
+else if crossUp
+    if pos == Position.SHORT
+        labelText := "BUY"
+        pos := Position.LONG
+    else if pos == Position.FLAT
+        labelText := bullConfirmed ? "BUY" : "WB"
+        pos := Position.LONG
+
+else if crossDown
+    if pos == Position.LONG
+        labelText := "SELL"
+        pos := Position.SHORT
+    else if pos == Position.FLAT
+        labelText := bearConfirmed ? "SELL" : "WS"
+        pos := Position.SHORT
+else
+    labelText := ""
+
+
+
+// === PRECOMPUTE (ALWAYS EXECUTES)
+cross_618_up   = ta.crossover(close, fib_618)
+cross_618_down = ta.crossunder(close, fib_618)
+
+cross_50_up    = ta.crossover(close, fib_50)
+cross_50_down  = ta.crossunder(close, fib_50)
+
+
+
+// === SIGNALS
+psy_rb = validFib and inRange and cross_618_up
+psy_rs = validFib and inRange and cross_618_down
+psy_gb = validFib and inRange and cross_50_up
+psy_gs = validFib and inRange and cross_50_down
+
+//────────────────────
+// LABEL TEXT
+//────────────────────
+string psyLabelText = ""
+
+if psy_rb
+    psyLabelText := "RB"
+else if psy_rs
+    psyLabelText := "RS"
+else if psy_gb
+    psyLabelText := "GB"
+else if psy_gs
+    psyLabelText := "GS"
+
+//────────────────────
+// COLOR
+//────────────────────
+psyColor =
+     psy_rb ? color.lime :
+     psy_rs ? color.red  :
+     psy_gb ? color.blue :
+     psy_gs ? color.purple :
+     na
+
+//────────────────────
+// POSITION
+//────────────────────
+psyY =
+     psy_rb or psy_gb ? high + (high - low) * 0.2 :
+     psy_rs or psy_gs ? low  - (high - low) * 0.2 :
+     na
+
+//────────────────────
+// DRAW
+//────────────────────
+var int lastPsyBar = na
+newPsySignal = psy_rb or psy_rs or psy_gb or psy_gs
+
+if newPsySignal and barstate.isconfirmed and bar_index != lastPsyBar
+    lastPsyBar := bar_index
+
+    label.new(
+        bar_index,
+        psyY,
+        "Psy " + psyLabelText,
+        style = label.style_label_up,
+        color = psyColor,
+        textcolor = color.white,
+        size = size.small
+    )
+
+//────────────────────
+// DRAW LABEL (EVENT ONLY)
+//────────────────────
+if labelText != ""
+
+
+    // --- send alert ---
+    send_alert(
+        syminfo.ticker,
+        time,
+        pos,
+        labelText,
+        open,
+        close,
+        high,
+        low,
+        volume,
+        timeframe.period,
+        hlcVwap
+    )
+
+    label.new(
+        bar_index,
+        labelText == "BUY" or labelText == "WB" ? low : high,
+        labelText,
+        style = label.style_diamond,
+        size = size.small,
+        color =
+            labelText == "BUY"  ? color.new(color.green, 55) :
+            labelText == "SELL" ? color.new(color.red,   55) :
+            labelText == "WB"   ? color.new(color.lime,  65) :
+            labelText == "WS"   ? color.new(color.orange,65) :
+                                  color.gray,
+        textcolor = color.white
+    )
+
+
+//────────────────────
+// VECTOR CANDLE ZONES
+//────────────────────
+regularCandleUpColor = color.rgb(140, 161, 142)
+
+var zoneBoxesAbove = array.new_box()
+var zoneBoxesBelow = array.new_box()
+
+if showVCZ
+
+    pvsra = getPvsraFlagByColor(
+         pvsraColor,
+         redVectorColor,
+         greenVectorColor,
+         violetVectorColor,
+         blueVectorColor,
+         regularCandleUpColor
+     )
+
+    updateZones(
+         pvsra,
+         0,
+         zoneBoxesBelow,
+         zonesMax,
+         high,
+         low,
+         open,
+         close,
+         transperancy,
+         zoneUpdateType,
+         zoneColor,
+         zoneType,
+         borderWidth,
+         colorOverride,
+         redVectorColor,
+         greenVectorColor,
+         violetVectorColor,
+         blueVectorColor
+     )
+
+    updateZones(
+         pvsra,
+         1,
+         zoneBoxesAbove,
+         zonesMax,
+         high,
+         low,
+         open,
+         close,
+         transperancy,
+         zoneUpdateType,
+         zoneColor,
+         zoneType,
+         borderWidth,
+         colorOverride,
+         redVectorColor,
+         greenVectorColor,
+         violetVectorColor,
+         blueVectorColor
+     )
+
+    cleanarr(zoneBoxesAbove)
+    cleanarr(zoneBoxesBelow)
+
