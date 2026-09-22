@@ -1,0 +1,26 @@
+# Preferred logical symbols — user intent, resolved against the broker's
+# actual symbol list at runtime. Never requested from MT5 verbatim.
+symbols:
+  preferred:
+    - XAUUSD
+    - XAGUSD
+    - EURUSD
+    - BTCUSD
+
+  # Explicit logical -> broker symbol mappings. Always override automatic
+  # matching. Use these to disambiguate or to pin a specific contract.
+  mappings:
+    # XAUUSD: XAUUSDm
+    # XAGUSD: XAGUSDm
+    # EURUSD: EURUSDm
+
+# Timeframes used for history synchronization and market-state analysis.
+timeframes:
+  - M15
+  - H1
+  - H4
+  - D1
+
+# History synchronization.
+history:
+  bars: 1000

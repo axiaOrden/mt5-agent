@@ -1,0 +1,12 @@
+# Account-health classification thresholds (deterministic, no LLM).
+account:
+  # Floating drawdown as % of balance.
+  warning_drawdown_pct: 5
+  critical_drawdown_pct: 10
+
+  # Margin level as % (equity / margin * 100).
+  warning_margin_level_pct: 300
+  critical_margin_level_pct: 150
+
+  # Open-position count.
+  max_positions: 10
