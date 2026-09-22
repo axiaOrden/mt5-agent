@@ -16,6 +16,7 @@ import argparse
 import logging
 import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
 
 import pandas as pd
@@ -27,9 +28,10 @@ from .models import AccountHealth, AccountInfo, MarketState, Position, SymbolInf
 from .mt5 import MT5Provider, ProviderError, RemoteMT5Provider, ResolutionResult, SymbolResolver, TradingProvider
 from .mt5.history import HistoryError, HistoryStore
 from .mt5.mock import MockProvider
-from .mt5.closure import filter_closed_bars
+from .mt5.closure import bar_duration, filter_closed_bars
 from .signals import replay_cloudgazer
 from .signals.vwap_events import broker_session_anchors
+from .research import DEFAULT_HORIZONS, export_parquet, replay_history, summarize
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +154,10 @@ def _fmt_float(value: Optional[float], digits: int = 2) -> str:
 
 def _fmt_ratio(value: Optional[float]) -> str:
     return "n/a" if value is None else f"{value:.2f}x"
+
+
+def _fmt_pct(value: Optional[float]) -> str:
+    return "n/a" if value is None else f"{value * 100:.3f}%"
 
 
 def print_account(account: AccountInfo, health: AccountHealth) -> None:
@@ -543,6 +549,81 @@ def cmd_context(config: Config, logical: str, event_timeframe: str, window: int)
         provider.disconnect()
 
 
+def cmd_replay(
+    config: Config,
+    logical: str,
+    event_timeframe: str,
+    horizons: tuple[int, ...],
+    window: int,
+    bars_requested: int,
+    output: Optional[str],
+) -> int:
+    """Build a historical event research dataset from closed broker bars."""
+    provider = build_provider(config)
+    provider.connect()
+    try:
+        resolution = SymbolResolver(provider.available_symbols()).resolve([logical], config.symbol_mappings)[0]
+        if not resolution.resolved:
+            print(f"Unresolved symbol: {logical}", file=sys.stderr)
+            return 1
+        symbol = resolution.broker
+        broker_now = provider.tick(symbol).time
+        store = HistoryStore(config.history_dir)
+        histories: dict[str, pd.DataFrame] = {}
+        start = SUPPORTED_CONTEXT_TIMEFRAMES.index(event_timeframe)
+        for timeframe in SUPPORTED_CONTEXT_TIMEFRAMES[start:]:
+            if timeframe == event_timeframe:
+                requested = bars_requested
+            else:
+                covered_seconds = bars_requested * bar_duration(event_timeframe).total_seconds()
+                requested = max(
+                    100,
+                    int(covered_seconds / bar_duration(timeframe).total_seconds()) + 100,
+                )
+            store.sync(provider, symbol, timeframe, requested)
+            histories[timeframe] = filter_closed_bars(
+                store.load(symbol, timeframe), timeframe, broker_now
+            )
+        result = replay_history(
+            histories, symbol, event_timeframe,
+            horizons=horizons, stability_window=window,
+        )
+        target = (Path(output) if output else
+                  config.data_dir / "research" / f"{symbol}_{event_timeframe}_events.parquet")
+        export_parquet(result, target)
+        stats = summarize(result.events, result.horizons)
+        print(f"{symbol} {event_timeframe} HISTORICAL REPLAY")
+        print(_line("─"))
+        if result.period_start and result.period_end:
+            print(f"{'Period':<20}{result.period_start:%Y-%m-%d %H:%M} -> {result.period_end:%Y-%m-%d %H:%M} UTC")
+        print(f"{'Closed candles':<20}{result.closed_candles}")
+        print(f"{'State events':<20}{len(result.events)}")
+        for label in ("BUY", "SELL", "WB", "WS", "NONE"):
+            count = sum((event.label or "NONE") == label for event in result.events)
+            print(f"{label:<20}{count}")
+        if result.missing_d1_coverage:
+            print("D1 coverage         INCOMPLETE — early VWAP/PVSRA context may be unavailable")
+        print()
+        print("Forward research")
+        print(_line("─"))
+        print(f"{'HORIZON':<10}{'N':<8}{'MEAN DIR':<14}{'MED DIR':<14}{'MED MFE':<14}{'MED MAE'}")
+        rows = stats[0].horizons if stats else ()
+        for item in rows:
+            print(f"{item.horizon:<10}{item.sample_count:<8}{_fmt_pct(item.mean_directional_return):<14}"
+                  f"{_fmt_pct(item.median_directional_return):<14}{_fmt_pct(item.median_mfe):<14}"
+                  f"{_fmt_pct(item.median_mae)}")
+        print()
+        print("PVSRA event counts")
+        print(_line("─"))
+        for group in summarize(result.events, result.horizons, group_by="pvsra_classification"):
+            print(f"{group.group:<20}{group.event_count}")
+        print()
+        print(f"Research dataset: {target}")
+        return 0
+    finally:
+        provider.disconnect()
+
+
 def cmd_latest(config: Config) -> int:
     """Print the latest closed bar timestamp per symbol × timeframe.
 
@@ -629,6 +710,16 @@ def main(argv: Optional[list[str]] = None) -> int:
     p_context.add_argument("--timeframe", choices=SUPPORTED_CONTEXT_TIMEFRAMES, default="M15")
     p_context.add_argument("--window", type=int, default=20,
                            help="closed bars used for state stability")
+    p_replay = sub.add_parser("replay", help="historical Cloudgazer event research")
+    p_replay.add_argument("symbol")
+    p_replay.add_argument("--timeframe", choices=SUPPORTED_CONTEXT_TIMEFRAMES, default="M15")
+    p_replay.add_argument("--horizons", default=",".join(map(str, DEFAULT_HORIZONS)),
+                          help="comma-separated forward bar horizons")
+    p_replay.add_argument("--window", type=int, default=20,
+                          help="event-time Cloudgazer activity window")
+    p_replay.add_argument("--bars", type=int, default=1000,
+                          help="explicit research history depth for event timeframe")
+    p_replay.add_argument("--output", default=None, help="research Parquet output path")
     p_clear = sub.add_parser("history-clear", help="delete cached history (requires --yes)")
     p_clear.add_argument("--yes", action="store_true", help="confirm deletion")
 
@@ -662,6 +753,19 @@ def main(argv: Optional[list[str]] = None) -> int:
             if args.window < 1:
                 parser.error("--window must be positive")
             return cmd_context(config, args.symbol, args.timeframe, args.window)
+        if args.command == "replay":
+            if args.window < 1 or args.bars < 1:
+                parser.error("--window and --bars must be positive")
+            try:
+                horizons = tuple(int(value.strip()) for value in args.horizons.split(",") if value.strip())
+            except ValueError:
+                parser.error("--horizons must be comma-separated positive integers")
+            if not horizons or any(value < 1 for value in horizons):
+                parser.error("--horizons must contain positive integers")
+            return cmd_replay(
+                config, args.symbol, args.timeframe, horizons,
+                args.window, args.bars, args.output,
+            )
         if args.command == "history-clear":
             return cmd_history_clear(config, args.yes)
     except ProviderError as exc:
