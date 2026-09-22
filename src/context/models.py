@@ -6,6 +6,7 @@ from datetime import datetime
 from enum import Enum
 
 from ..signals.models import CloudgazerState, CloudgazerTransition, EventType
+from ..pvsra.models import PVSRAResult
 
 
 class Direction(str, Enum):
@@ -54,6 +55,7 @@ class SignalContext:
     cloudgazer_transition: CloudgazerTransition | None
     cloudgazer_state: CloudgazerState | None
     event_age_bars: int | None
+    event_pvsra: PVSRAResult | None
     stability_window: int
     timeframe_contexts: tuple[TimeframeContext, ...]
 

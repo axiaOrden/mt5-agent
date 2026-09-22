@@ -150,6 +150,10 @@ def _fmt_float(value: Optional[float], digits: int = 2) -> str:
     return f"{value:,.{digits}f}"
 
 
+def _fmt_ratio(value: Optional[float]) -> str:
+    return "n/a" if value is None else f"{value:.2f}x"
+
+
 def print_account(account: AccountInfo, health: AccountHealth) -> None:
     print("ACCOUNT")
     print(_line("─"))
@@ -514,7 +518,21 @@ def cmd_context(config: Config, logical: str, event_timeframe: str, window: int)
             print("(no state-changing event in available history)")
 
         print()
-        print("Recent state stability")
+        print("PVSRA confirmation for event candle")
+        print(_line("─"))
+        pvsra = context.event_pvsra
+        if pvsra is None:
+            print("(unavailable)")
+        else:
+            print(f"{'Classification':<22}{pvsra.classification.value}")
+            print(f"{'Candle direction':<22}{pvsra.candle_direction.value}")
+            print(f"{'Volume source':<22}{pvsra.volume_source.value}")
+            print(f"{'Volume ratio':<22}{_fmt_ratio(pvsra.volume_ratio)}")
+            print(f"{'Spread ratio':<22}{_fmt_ratio(pvsra.spread_ratio)}")
+            print(f"{'VWAP displacement':<22}{_fmt_ratio(pvsra.vwap_displacement_ratio)}")
+
+        print()
+        print("Recent Cloudgazer state activity")
         print(_line("─"))
         for item in context.timeframe_contexts:
             print(f"{item.timeframe:<18}{item.recent_state_changes} changes / "

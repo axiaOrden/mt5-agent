@@ -7,6 +7,7 @@ import pandas as pd
 
 from ..analysis.market_state import MarketStateAnalyzer
 from ..mt5.closure import bar_duration, filter_closed_bars
+from ..pvsra.engine import analyze_pvsra
 from ..signals.cloudgazer import replay_cloudgazer
 from ..signals.models import CloudgazerState, CloudgazerTransition
 from ..signals.vwap_events import broker_session_anchors
@@ -98,6 +99,15 @@ def _build_context(
     direction = direction_for_event(event)
     event_bars = closed[event_timeframe]
     event_age = _bars_ago(event_bars, latest_transition.bar_open_time) if latest_transition else None
+    event_pvsra = None
+    if latest_transition is not None and not event_bars.empty:
+        event_anchors = broker_session_anchors(daily, pd.Timestamp(latest_transition.bar_open_time))
+        event_pvsra = analyze_pvsra(
+            event_bars,
+            event_timeframe,
+            bar_open_time=latest_transition.bar_open_time,
+            daily_opens=event_anchors,
+        )
 
     analyzer = MarketStateAnalyzer()
     contexts = []
@@ -140,6 +150,7 @@ def _build_context(
         cloudgazer_transition=latest_transition,
         cloudgazer_state=event_state,
         event_age_bars=event_age,
+        event_pvsra=event_pvsra,
         stability_window=stability_window,
         timeframe_contexts=tuple(contexts),
     )
