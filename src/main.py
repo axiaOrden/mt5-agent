@@ -34,7 +34,7 @@ from .mt5.closure import bar_duration, filter_closed_bars
 from .signals import replay_cloudgazer
 from .signals.vwap_events import broker_session_anchors
 from .research import DEFAULT_HORIZONS, export_parquet, replay_history, summarize
-from .research.acquisition import ResearchHistoryStore, acquire, utc_date, TIMEFRAMES
+from .research.acquisition import ResearchHistoryStore, acquire, validate_replay_coverage, utc_date, TIMEFRAMES
 
 logger = logging.getLogger(__name__)
 
@@ -574,6 +574,8 @@ def cmd_replay(
             return 1
         symbol = resolution.broker
         broker_now = provider.tick(symbol).time
+        start_date = utc_date(research_from) if research_history and research_from else None
+        end_date = utc_date(research_to) if research_history and research_to else None
         store = (ResearchHistoryStore(config.data_dir / "research" / "history") if research_history
                  else HistoryStore(config.history_dir))
         histories: dict[str, pd.DataFrame] = {}
@@ -592,10 +594,8 @@ def cmd_replay(
             histories[timeframe] = filter_closed_bars(
                 store.load(symbol, timeframe), timeframe, broker_now
             )
-            if research_history and histories[timeframe].empty:
-                raise HistoryError(f"No research history for {symbol} {timeframe}; run research-sync first")
-        start_date = utc_date(research_from) if research_history and research_from else None
-        end_date = utc_date(research_to) if research_history and research_to else None
+        if research_history:
+            validate_replay_coverage(histories, symbol, start_date, end_date)
         result = replay_history(
             histories, symbol, event_timeframe,
             horizons=horizons, stability_window=window,
@@ -662,8 +662,14 @@ def cmd_research_sync(config: Config, logical: str, from_date: str, to_date: str
             print(f"{symbol} {timeframe}: {report.count:,} candles, {report.earliest} -> {report.latest}")
             print(f"  requested start reached: {report.requested_start_reached}; "
                   f"warmup start reached: {report.start_reached}; end reached: {report.end_reached}; "
+                  f"continuously usable: {report.continuously_usable}; "
                   f"gaps: {report.discontinuities} (largest {report.largest_gap}); "
                   f"duplicates: {report.duplicates}; revisions: {report.conflicts}; empty chunks: {report.empty_chunks}")
+            print(f"  primed year windows: {report.primed_windows}; empty priming windows: "
+                  f"{report.empty_prime_windows}; suspicious interior gaps: {len(report.suspicious_interior_gaps)}; "
+                  f"unresolved empty chunks: {len(report.unresolved_empty_chunks)}")
+            for hole in report.suspicious_interior_gaps[:3]:
+                print(f"  SUSPICIOUS GAP: {hole[0]} -> {hole[1]} ({hole[2]})")
             for gap in report.notable_gaps:
                 print(f"  gap: {gap[0]} -> {gap[1]} ({gap[2]})")
             if report.d1_open_utc:

@@ -6,7 +6,9 @@ import pytest
 from src.mt5.history import HistoryError, RATE_COLUMNS
 from src.mt5.errors import ProviderError
 from src.mt5.remote import RemoteMT5Provider
-from src.research.acquisition import ResearchHistoryStore, acquire, chunks, fingerprint, merge, normalize
+from src.research.acquisition import (ResearchHistoryStore, acquire, chunks, fingerprint,
+                                      merge, normalize, suspicious_gaps, validate_replay_coverage,
+                                      year_windows)
 
 UTC = timezone.utc
 
@@ -109,3 +111,83 @@ def test_remote_bounded_window_uses_exclusive_to(monkeypatch):
     end = start + timedelta(days=14)
     assert provider.rates_window("XAUUSDc", "M15", start, end).empty
     assert f"from={int(start.timestamp())}&to={int(end.timestamp())}" in seen[0]
+
+
+@pytest.mark.parametrize("timeframe,step", [("M15", timedelta(minutes=15)),
+                                            ("H1", timedelta(hours=1)),
+                                            ("H4", timedelta(hours=4)),
+                                            ("D1", timedelta(days=1))])
+def test_year_priming_recovers_lazy_mt5_history(tmp_path, timeframe, step):
+    start = datetime(2023, 1, 1, tzinfo=UTC)
+    end = start + timedelta(days=28)
+    times = [start + i * step for i in range(int((end-start)/step))]
+    class LazyProvider:
+        primed = False
+        calls = []
+        def tick(self, symbol):
+            return type("Tick", (), {"time": end + timedelta(days=1)})()
+        def rates_window(self, symbol, tf, begin, finish):
+            self.calls.append((begin, finish))
+            if finish - begin > timedelta(days=20):
+                self.primed = True
+                return bars(times[0], times[-1])
+            return bars(*(t for t in times if begin <= t < finish)) if self.primed else bars()
+    provider = LazyProvider()
+    store = ResearchHistoryStore(tmp_path)
+    result = acquire(provider, store, "X", timeframe, start, end, warmup_days=0,
+                     chunk_days=14, progress=lambda _: None)
+    assert provider.calls[0] == (start, end)  # bounded broad priming first
+    assert len(provider.calls) > 1  # short chunks recovered the interior
+    assert result.count == len(times)
+    assert result.continuously_usable
+    assert not result.suspicious_interior_gaps
+    assert store.load("X", timeframe)["time"].iloc[-1] < pd.Timestamp(end)
+
+
+def test_unresolved_empty_range_and_replay_safety(tmp_path):
+    start = datetime(2023, 1, 1, tzinfo=UTC)
+    end = start + timedelta(days=28)
+    class SparseProvider:
+        def tick(self, symbol):
+            return type("Tick", (), {"time": end + timedelta(days=1)})()
+        def rates_window(self, symbol, timeframe, begin, finish):
+            return bars(start, end - timedelta(days=1)) if finish - begin > timedelta(days=20) else bars()
+    store = ResearchHistoryStore(tmp_path)
+    result = acquire(SparseProvider(), store, "X", "D1", start, end,
+                     warmup_days=0, chunk_days=14, progress=lambda _: None)
+    assert result.requested_start_reached and result.end_reached
+    assert not result.continuously_usable
+    assert result.unresolved_empty_chunks
+    assert len(result.suspicious_interior_gaps) == 1
+    with pytest.raises(HistoryError, match="unexplained gap"):
+        validate_replay_coverage({"D1": store.load("X", "D1")}, "X", start, end)
+
+
+def test_weekend_gap_is_preserved_and_year_windows_are_bounded():
+    friday = datetime(2026, 1, 2, tzinfo=UTC)
+    monday = friday + timedelta(days=3)
+    frame = normalize(bars(friday, monday), "D1")
+    assert not suspicious_gaps(frame, friday, monday + timedelta(days=1))
+    assert len(frame) == 2
+    assert list(year_windows(datetime(2022, 7, 1, tzinfo=UTC),
+                             datetime(2024, 2, 1, tzinfo=UTC))) == [
+        (datetime(2022, 7, 1, tzinfo=UTC), datetime(2023, 1, 1, tzinfo=UTC)),
+        (datetime(2023, 1, 1, tzinfo=UTC), datetime(2024, 1, 1, tzinfo=UTC)),
+        (datetime(2024, 1, 1, tzinfo=UTC), datetime(2024, 2, 1, tzinfo=UTC)),
+    ]
+
+
+def test_priming_candles_survive_later_empty_small_response(tmp_path):
+    start = datetime(2023, 1, 1, tzinfo=UTC)
+    end = start + timedelta(days=28)
+    historical = bars(*(start + timedelta(days=i) for i in range(28)))
+    class NonmonotonicMT5:
+        def tick(self, symbol):
+            return type("Tick", (), {"time": end + timedelta(days=1)})()
+        def rates_window(self, symbol, timeframe, begin, finish):
+            return historical if finish - begin > timedelta(days=20) else bars()
+    report = acquire(NonmonotonicMT5(), ResearchHistoryStore(tmp_path), "X", "D1",
+                     start, end, warmup_days=0, chunk_days=14, progress=lambda _: None)
+    assert report.count == 28
+    assert report.continuously_usable
+    assert report.empty_chunks == 1  # tail verification was empty, prime data kept
