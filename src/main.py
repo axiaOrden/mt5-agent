@@ -21,11 +21,15 @@ from typing import Optional
 import pandas as pd
 
 from .analysis import AccountHealthAnalyzer, MarketStateAnalyzer, derive_metrics
+from .context import SUPPORTED_CONTEXT_TIMEFRAMES, context_as_of
 from .config import Config, load_config, setup_logging
 from .models import AccountHealth, AccountInfo, MarketState, Position, SymbolInfo
 from .mt5 import MT5Provider, ProviderError, RemoteMT5Provider, ResolutionResult, SymbolResolver, TradingProvider
 from .mt5.history import HistoryError, HistoryStore
 from .mt5.mock import MockProvider
+from .mt5.closure import filter_closed_bars
+from .signals import replay_cloudgazer
+from .signals.vwap_events import broker_session_anchors
 
 logger = logging.getLogger(__name__)
 
@@ -408,6 +412,119 @@ def cmd_analyze(config: Config, logical: str) -> int:
     return 0
 
 
+def cmd_signals(config: Config, logical: str, timeframe: str, last: int) -> int:
+    """Inspect closed broker candles and replay raw events plus Pine state."""
+    provider = build_provider(config)
+    provider.connect()
+    try:
+        resolution = SymbolResolver(provider.available_symbols()).resolve([logical], config.symbol_mappings)[0]
+        if not resolution.resolved:
+            print(f"Unresolved symbol: {logical}", file=sys.stderr)
+            return 1
+        symbol = resolution.broker
+        # Fail closed when the broker tick cannot establish candle closure.
+        broker_now = provider.tick(symbol).time
+        store = HistoryStore(config.history_dir)
+        store.sync(provider, symbol, timeframe, config.history_bars)
+        bars = filter_closed_bars(store.load(symbol, timeframe), timeframe, broker_now)
+        if bars is None or bars.empty:
+            print(f"No broker-verified closed candles for {symbol} {timeframe}", file=sys.stderr)
+            return 1
+        # Pine resets ta.vwap(hlc3) on timeframe.change("1D"). Use broker D1
+        # timestamps as that boundary; closed history is extended through the
+        # current intraday session without consuming forming-candle prices.
+        if timeframe == "D1":
+            daily = bars
+        else:
+            store.sync(provider, symbol, "D1", config.history_bars)
+            daily = filter_closed_bars(store.load(symbol, "D1"), "D1", broker_now)
+        daily_opens = broker_session_anchors(daily, pd.Timestamp(bars["time"].iloc[-1]))
+        if daily_opens.empty:
+            print(f"No broker D1 session boundaries for {symbol}", file=sys.stderr)
+            return 1
+        transitions = replay_cloudgazer(bars, symbol, timeframe, broker_now=broker_now, daily_opens=daily_opens)
+        selected = [t for t in transitions if t.raw_events or t.label][-last:]
+        latest = bars.iloc[-1]
+        market = MarketStateAnalyzer().analyze(bars, symbol, timeframe, broker_now=broker_now)
+        print(f"{symbol} {timeframe} | latest closed {pd.Timestamp(latest['time']):%Y-%m-%d %H:%M} UTC | Closed YES")
+        print(f"Market State: {market.direction}/{market.condition} (display only)")
+        print("VWAP: Cloudgazer chart-timeframe hlc3 × MT5 tick_volume; reset at broker D1 opens")
+        print("Candle UTC          Raw events                                      Winner                Previous New   Label")
+        for t in selected:
+            raw = ",".join(e.event_type.value for e in t.raw_events)
+            winner = t.winning_event.event_type.value if t.winning_event else "-"
+            print(f"{t.bar_open_time:%Y-%m-%d %H:%M}  {raw:<47} {winner:<21} {t.previous_state.value:<8} {t.new_state.value:<5} {t.label or '-'}")
+            if t.suppressed_events:
+                print("  Suppressed: " + ", ".join(e.event_type.value for e in t.suppressed_events))
+        if not selected:
+            print("(no recent events)")
+        return 0
+    finally:
+        provider.disconnect()
+
+
+def cmd_context(config: Config, logical: str, event_timeframe: str, window: int) -> int:
+    """Display deterministic multi-timeframe facts from verified closed bars."""
+    provider = build_provider(config)
+    provider.connect()
+    try:
+        resolution = SymbolResolver(provider.available_symbols()).resolve([logical], config.symbol_mappings)[0]
+        if not resolution.resolved:
+            print(f"Unresolved symbol: {logical}", file=sys.stderr)
+            return 1
+        symbol = resolution.broker
+        broker_now = provider.tick(symbol).time
+        store = HistoryStore(config.history_dir)
+        histories: dict[str, pd.DataFrame] = {}
+        start = SUPPORTED_CONTEXT_TIMEFRAMES.index(event_timeframe)
+        for timeframe in SUPPORTED_CONTEXT_TIMEFRAMES[start:]:
+            store.sync(provider, symbol, timeframe, config.history_bars)
+            histories[timeframe] = filter_closed_bars(
+                store.load(symbol, timeframe), timeframe, broker_now
+            )
+
+        context = context_as_of(
+            histories, symbol, event_timeframe, broker_now, stability_window=window
+        )
+        print(symbol)
+        print(f"Context at {context.evaluated_at:%Y-%m-%d %H:%M} UTC from verified closed broker candles")
+        print()
+        print(f"{'TIMEFRAME':<11}{'ROLE':<17}{'STRUCTURE':<27}{'CLOUDGAZER':<13}{'STRUCTURAL':<13}{'CG ALIGNMENT'}")
+        for item in context.timeframe_contexts:
+            structure = (f"{item.market_direction}/{item.market_condition}"
+                         if item.market_direction else "UNAVAILABLE")
+            cg_state = item.cloudgazer_state.value if item.cloudgazer_state else "UNAVAILABLE"
+            print(f"{item.timeframe:<11}{item.role.value:<17}{structure:<27}{cg_state:<13}"
+                  f"{item.structural_alignment.value:<13}{item.cloudgazer_alignment.value}")
+
+        print()
+        print(f"Latest {event_timeframe} state event")
+        print(_line("─"))
+        transition = context.cloudgazer_transition
+        if transition and transition.winning_event:
+            print(f"{'Candle':<18}{transition.bar_open_time:%Y-%m-%d %H:%M} UTC")
+            print(f"{'Event':<18}{transition.winning_event.event_type.value}")
+            print(f"{'Direction':<18}{context.event_direction.value if context.event_direction else 'UNAVAILABLE'}")
+            print(f"{'Transition':<18}{transition.previous_state.value} -> {transition.new_state.value}")
+            print(f"{'Label':<18}{transition.label or 'NONE'}")
+            print(f"{'Bars ago':<18}{context.event_age_bars}")
+            if transition.suppressed_events:
+                print(f"{'Suppressed':<18}{', '.join(e.event_type.value for e in transition.suppressed_events)}")
+        else:
+            print("(no state-changing event in available history)")
+
+        print()
+        print("Recent state stability")
+        print(_line("─"))
+        for item in context.timeframe_contexts:
+            print(f"{item.timeframe:<18}{item.recent_state_changes} changes / "
+                  f"{item.observed_bars} closed bars")
+        print()
+        return 0
+    finally:
+        provider.disconnect()
+
+
 def cmd_latest(config: Config) -> int:
     """Print the latest closed bar timestamp per symbol × timeframe.
 
@@ -485,6 +602,15 @@ def main(argv: Optional[list[str]] = None) -> int:
     sub.add_parser("latest", help="latest closed bar timestamp per symbol × timeframe")
     p_analyze = sub.add_parser("analyze", help="detailed analysis of one symbol")
     p_analyze.add_argument("symbol", help="logical symbol, e.g. XAUUSD")
+    p_signals = sub.add_parser("signals", help="inspect closed-candle raw events and Cloudgazer replay")
+    p_signals.add_argument("symbol")
+    p_signals.add_argument("--timeframe", choices=("M15", "H1", "H4", "D1"), default="M15")
+    p_signals.add_argument("--last", type=int, default=20, help="number of recent event candles")
+    p_context = sub.add_parser("context", help="multi-timeframe signal context")
+    p_context.add_argument("symbol")
+    p_context.add_argument("--timeframe", choices=SUPPORTED_CONTEXT_TIMEFRAMES, default="M15")
+    p_context.add_argument("--window", type=int, default=20,
+                           help="closed bars used for state stability")
     p_clear = sub.add_parser("history-clear", help="delete cached history (requires --yes)")
     p_clear.add_argument("--yes", action="store_true", help="confirm deletion")
 
@@ -510,6 +636,14 @@ def main(argv: Optional[list[str]] = None) -> int:
             return cmd_latest(config)
         if args.command == "analyze":
             return cmd_analyze(config, args.symbol)
+        if args.command == "signals":
+            if args.last < 1:
+                parser.error("--last must be positive")
+            return cmd_signals(config, args.symbol, args.timeframe, args.last)
+        if args.command == "context":
+            if args.window < 1:
+                parser.error("--window must be positive")
+            return cmd_context(config, args.symbol, args.timeframe, args.window)
         if args.command == "history-clear":
             return cmd_history_clear(config, args.yes)
     except ProviderError as exc:
