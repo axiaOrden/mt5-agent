@@ -329,7 +329,14 @@ mt5-trading-agent/
 └── tests/             # unit tests (no live MT5 required)
 ```
 
+## Research history
+
+Deep, read-only broker-history acquisition and explicit research replay are
+documented in [docs/research-history.md](docs/research-history.md). Normal
+history sync remains lightweight.
+
 ## Testing
+
 
 ```bash
 .venv/bin/python -m pytest tests/ -v

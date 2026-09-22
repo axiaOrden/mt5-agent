@@ -110,6 +110,18 @@ def test_replay_is_deterministic_and_wall_clock_independent():
     assert replay_history(data, "TEST") == replay_history(data, "TEST")
 
 
+def test_research_filter_preserves_warmup_state_and_event_snapshots():
+    data = histories()
+    full = replay_history(data, "TEST", horizons=(1,))
+    assert len(full.events) > 2
+    cutoff = full.events[len(full.events) // 2].event_knowledge_time
+    filtered = replay_history(data, "TEST", horizons=(1,), report_from=cutoff)
+    assert filtered.events == tuple(event for event in full.events if event.event_knowledge_time >= cutoff)
+    assert filtered.events[0].previous_state == full.events[len(full.events) // 2].previous_state
+    assert filtered.events[0].previous_state.value == "LONG"
+    assert filtered.events[0].new_state.value == "SHORT"
+
+
 def test_missing_higher_timeframe_is_explicit_context_unavailable():
     data = {"M15": history("M15"), "D1": history("D1")}
     result = replay_history(data, "TEST", horizons=(1,))

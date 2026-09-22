@@ -208,7 +208,7 @@ def _rates(symbol: str, timeframe: str, count: int) -> dict:
     return _bars_payload(symbol, timeframe, raw)
 
 
-def _rates_range(symbol: str, timeframe: str, since_ts: int, count: int) -> dict:
+def _rates_range(symbol: str, timeframe: str, since_ts: int, count: int, until_ts: Optional[int] = None) -> dict:
     """Bars from ``since_ts`` (unix seconds) up to now, closed candles only.
 
     Range retrieval can include the currently forming bar; it is explicitly
@@ -220,8 +220,13 @@ def _rates_range(symbol: str, timeframe: str, since_ts: int, count: int) -> dict
         raise ValueError(f"unsupported timeframe: {timeframe}")
     mt5 = _ensure_initialized()
     from_dt = datetime.fromtimestamp(since_ts, tz=timezone.utc)
-    raw = mt5.copy_rates_range(symbol, TIMEFRAMES[timeframe], from_dt, datetime.now(timezone.utc))
-    if raw is None or len(raw) == 0:
+    # MT5 includes the upper timestamp. Request one second before the
+    # exclusive boundary so adjacent chunks cannot claim the same bar.
+    end_dt = datetime.fromtimestamp(until_ts - 1, tz=timezone.utc) if until_ts is not None else datetime.now(timezone.utc)
+    raw = mt5.copy_rates_range(symbol, TIMEFRAMES[timeframe], from_dt, end_dt)
+    if raw is None:
+        raise RuntimeError(f"range retrieval failed for {symbol} {timeframe}: {mt5.last_error()}")
+    if len(raw) == 0:
         return {"symbol": symbol, "timeframe": timeframe, "count": 0, "bars": []}
 
     duration = TIMEFRAME_SECONDS[timeframe]
@@ -337,6 +342,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         symbol, timeframe = parts[2], parts[3]
         since_ts = 0
+        until_ts = None
         count = 1000
         for pair in parsed.query.split("&") if parsed.query else []:
             key, _, value = pair.partition("=")
@@ -346,16 +352,22 @@ class Handler(BaseHTTPRequestHandler):
                 except ValueError:
                     self._json(400, {"error": "from must be an integer (unix seconds)"})
                     return
+            elif key == "to":
+                try:
+                    until_ts = int(value)
+                except ValueError:
+                    self._json(400, {"error": "to must be an integer (unix seconds)"})
+                    return
             elif key == "count":
                 try:
                     count = int(value)
                 except ValueError:
                     self._json(400, {"error": "count must be an integer"})
                     return
-        if since_ts < 0 or count <= 0 or count > 100000:
+        if since_ts < 0 or count <= 0 or count > 100000 or (until_ts is not None and until_ts <= since_ts):
             self._json(400, {"error": "from/count out of range"})
             return
-        self._json(200, _rates_range(symbol, timeframe, since_ts, count))
+        self._json(200, _rates_range(symbol, timeframe, since_ts, count, until_ts))
 
     def _handle_tick(self, path: str) -> None:
         parts = path.split("/")

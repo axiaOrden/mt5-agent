@@ -13,9 +13,11 @@ Commands:
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -32,6 +34,7 @@ from .mt5.closure import bar_duration, filter_closed_bars
 from .signals import replay_cloudgazer
 from .signals.vwap_events import broker_session_anchors
 from .research import DEFAULT_HORIZONS, export_parquet, replay_history, summarize
+from .research.acquisition import ResearchHistoryStore, acquire, utc_date, TIMEFRAMES
 
 logger = logging.getLogger(__name__)
 
@@ -557,6 +560,9 @@ def cmd_replay(
     window: int,
     bars_requested: int,
     output: Optional[str],
+    research_history: bool = False,
+    research_from: Optional[str] = None,
+    research_to: Optional[str] = None,
 ) -> int:
     """Build a historical event research dataset from closed broker bars."""
     provider = build_provider(config)
@@ -568,7 +574,8 @@ def cmd_replay(
             return 1
         symbol = resolution.broker
         broker_now = provider.tick(symbol).time
-        store = HistoryStore(config.history_dir)
+        store = (ResearchHistoryStore(config.data_dir / "research" / "history") if research_history
+                 else HistoryStore(config.history_dir))
         histories: dict[str, pd.DataFrame] = {}
         start = SUPPORTED_CONTEXT_TIMEFRAMES.index(event_timeframe)
         for timeframe in SUPPORTED_CONTEXT_TIMEFRAMES[start:]:
@@ -580,13 +587,19 @@ def cmd_replay(
                     100,
                     int(covered_seconds / bar_duration(timeframe).total_seconds()) + 100,
                 )
-            store.sync(provider, symbol, timeframe, requested)
+            if not research_history:
+                store.sync(provider, symbol, timeframe, requested)
             histories[timeframe] = filter_closed_bars(
                 store.load(symbol, timeframe), timeframe, broker_now
             )
+            if research_history and histories[timeframe].empty:
+                raise HistoryError(f"No research history for {symbol} {timeframe}; run research-sync first")
+        start_date = utc_date(research_from) if research_history and research_from else None
+        end_date = utc_date(research_to) if research_history and research_to else None
         result = replay_history(
             histories, symbol, event_timeframe,
             horizons=horizons, stability_window=window,
+            report_from=start_date, report_to=end_date,
         )
         target = (Path(output) if output else
                   config.data_dir / "research" / f"{symbol}_{event_timeframe}_events.parquet")
@@ -619,6 +632,55 @@ def cmd_replay(
             print(f"{group.group:<20}{group.event_count}")
         print()
         print(f"Research dataset: {target}")
+        return 0
+    finally:
+        provider.disconnect()
+
+
+def cmd_research_sync(config: Config, logical: str, from_date: str, to_date: str,
+                      warmup_days: int, chunk_days: int, force_refresh: bool) -> int:
+    start, end = utc_date(from_date), utc_date(to_date)
+    if end <= start or warmup_days < 0 or chunk_days < 1:
+        raise ValueError("research range and chunk days must be positive; warmup days nonnegative")
+    provider = build_provider(config)
+    provider.connect()
+    try:
+        resolution = SymbolResolver(provider.available_symbols()).resolve([logical], config.symbol_mappings)[0]
+        if not resolution.resolved:
+            raise ProviderError(f"Unresolved symbol: {logical}")
+        symbol = resolution.broker
+        store = ResearchHistoryStore(config.data_dir / "research" / "history")
+        reports = []
+        print(f"{symbol} RESEARCH HISTORY")
+        print(f"Requested [from, to): {start.isoformat()} -> {end.isoformat()}")
+        print(f"Warmup: {warmup_days} calendar days; chunk: {chunk_days} days")
+        for timeframe in TIMEFRAMES:
+            report = acquire(provider, store, symbol, timeframe, start, end,
+                             warmup_days=warmup_days, chunk_days=chunk_days,
+                             force_refresh=force_refresh)
+            reports.append(report)
+            print(f"{symbol} {timeframe}: {report.count:,} candles, {report.earliest} -> {report.latest}")
+            print(f"  requested start reached: {report.requested_start_reached}; "
+                  f"warmup start reached: {report.start_reached}; end reached: {report.end_reached}; "
+                  f"gaps: {report.discontinuities} (largest {report.largest_gap}); "
+                  f"duplicates: {report.duplicates}; revisions: {report.conflicts}; empty chunks: {report.empty_chunks}")
+            for gap in report.notable_gaps:
+                print(f"  gap: {gap[0]} -> {gap[1]} ({gap[2]})")
+            if report.d1_open_utc:
+                print(f"  D1 open UTC: {report.d1_open_utc}")
+            print(f"  SHA256: {report.fingerprint}")
+        metadata = {
+            "symbol": logical, "broker_symbol": symbol, "requested_from": start.isoformat(),
+            "requested_to_exclusive": end.isoformat(), "warmup_days": warmup_days,
+            "chunk_days": chunk_days, "acquired_at": datetime.now(timezone.utc).isoformat(),
+            "timeframes": [asdict(report) for report in reports],
+        }
+        path = store.base_dir / symbol / "latest_acquisition.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temp = path.with_suffix(".tmp")
+        temp.write_text(json.dumps(metadata, indent=2) + "\n")
+        temp.replace(path)
+        print(f"Research metadata: {path}")
         return 0
     finally:
         provider.disconnect()
@@ -720,6 +782,16 @@ def main(argv: Optional[list[str]] = None) -> int:
     p_replay.add_argument("--bars", type=int, default=1000,
                           help="explicit research history depth for event timeframe")
     p_replay.add_argument("--output", default=None, help="research Parquet output path")
+    p_replay.add_argument("--research-history", action="store_true", help="use separately acquired deep research history")
+    p_replay.add_argument("--from", dest="research_from", help="inclusive UTC research date (with --research-history)")
+    p_replay.add_argument("--to", dest="research_to", help="exclusive UTC research date (with --research-history)")
+    p_research = sub.add_parser("research-sync", help="acquire bounded deep broker history")
+    p_research.add_argument("symbol")
+    p_research.add_argument("--from", dest="from_date", required=True, help="inclusive UTC date YYYY-MM-DD")
+    p_research.add_argument("--to", dest="to_date", required=True, help="exclusive UTC date YYYY-MM-DD")
+    p_research.add_argument("--warmup-days", type=int, default=180)
+    p_research.add_argument("--chunk-days", type=int, default=14)
+    p_research.add_argument("--force-refresh", action="store_true")
     p_clear = sub.add_parser("history-clear", help="delete cached history (requires --yes)")
     p_clear.add_argument("--yes", action="store_true", help="confirm deletion")
 
@@ -765,10 +837,14 @@ def main(argv: Optional[list[str]] = None) -> int:
             return cmd_replay(
                 config, args.symbol, args.timeframe, horizons,
                 args.window, args.bars, args.output,
+                args.research_history, args.research_from, args.research_to,
             )
+        if args.command == "research-sync":
+            return cmd_research_sync(config, args.symbol, args.from_date, args.to_date,
+                                     args.warmup_days, args.chunk_days, args.force_refresh)
         if args.command == "history-clear":
             return cmd_history_clear(config, args.yes)
-    except ProviderError as exc:
+    except (ProviderError, HistoryError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
     return 0

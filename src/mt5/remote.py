@@ -145,6 +145,23 @@ class RemoteMT5Provider(TradingProvider):
         data = self._get(path)
         return self._bars_to_frame(data)
 
+    def rates_window(self, symbol: str, timeframe: str, start: datetime, end: datetime) -> pd.DataFrame:
+        """Read a bounded [start, end) window through the read-only bridge."""
+        self._validate_timeframe(timeframe)
+        from_ts = int(pd.Timestamp(start).timestamp())
+        to_ts = int(pd.Timestamp(end).timestamp())
+        if to_ts <= from_ts:
+            raise ValueError("end must be after start")
+        path = (
+            f"/rates_range/{urllib.parse.quote(symbol)}/{timeframe}"
+            f"?from={from_ts}&to={to_ts}&count=100000"
+        )
+        data = self._get(path)
+        frame = self._bars_to_frame(data)
+        if len(frame) > 100000:
+            raise ProviderError("bounded history response exceeded 100000 bars")
+        return frame
+
     def tick(self, symbol: str) -> Tick:
         path = f"/tick/{urllib.parse.quote(symbol)}"
         data = self._get(path)

@@ -67,6 +67,27 @@ def fetch_rates_since(mt5: Any, symbol: str, timeframe: str, since: datetime, co
     return df
 
 
+def fetch_rates_window(mt5: Any, symbol: str, timeframe: str, start: datetime, end: datetime) -> pd.DataFrame:
+    """Read a bounded [start, end) window; close filtering remains broker-tick based."""
+    start_ts = pd.Timestamp(start).tz_convert("UTC")
+    end_ts = pd.Timestamp(end).tz_convert("UTC")
+    raw = mt5.copy_rates_range(
+        symbol, _timeframe_to_mt5(timeframe), start_ts.to_pydatetime(),
+        (end_ts - pd.Timedelta(seconds=1)).to_pydatetime(),
+    )
+    if raw is None:
+        raise ProviderError(f"MT5 range retrieval failed for {symbol} {timeframe}: {mt5.last_error()}")
+    if len(raw) == 0:
+        return pd.DataFrame(columns=RATE_COLUMNS)
+    tick = mt5.symbol_info_tick(symbol)
+    if tick is None:
+        raise ProviderError(f"tick unavailable for {symbol}; cannot verify closure")
+    return filter_closed_bars(
+        _to_frame(raw), timeframe,
+        pd.Timestamp(tick.time, unit="s", tz="UTC").to_pydatetime(),
+    )
+
+
 def _to_frame(raw: Any) -> pd.DataFrame:
     df = pd.DataFrame(raw)
     df["time"] = pd.to_datetime(df["time"], unit="s", utc=True)

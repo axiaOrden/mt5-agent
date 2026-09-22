@@ -68,6 +68,10 @@ class TradingProvider(ABC):
             since_ts = since_ts.tz_localize("UTC")
         return df[df["time"] >= since_ts].reset_index(drop=True)
 
+    def rates_window(self, symbol: str, timeframe: str, start: datetime, end: datetime) -> pd.DataFrame:
+        """Closed bars whose opens lie in [start, end); deep research only."""
+        raise ProviderError(f"bounded history not supported by {type(self).__name__}")
+
     def tick(self, symbol: str) -> Tick:
         """Latest tick for ``symbol``. Providers without tick support raise ProviderError."""
         raise ProviderError(f"tick not supported by {type(self).__name__}")
@@ -146,6 +150,11 @@ class MT5Provider(TradingProvider):
     def rates_since(self, symbol: str, timeframe: str, since: datetime, count: int) -> pd.DataFrame:
         self._require_connected()
         return fetch_rates_since(self._mt5, symbol, timeframe, since, count)
+
+    def rates_window(self, symbol: str, timeframe: str, start: datetime, end: datetime) -> pd.DataFrame:
+        self._require_connected()
+        from .history import fetch_rates_window
+        return fetch_rates_window(self._mt5, symbol, timeframe, start, end)
 
     def tick(self, symbol: str) -> Tick:
         self._require_connected()

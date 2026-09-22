@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import pandas as pd
+from datetime import datetime
 
 from ..context.engine import context_for_event
 from ..mt5.closure import bar_duration
@@ -20,6 +21,8 @@ def replay_history(
     *,
     horizons: tuple[int, ...] = DEFAULT_HORIZONS,
     stability_window: int = 20,
+    report_from: datetime | None = None,
+    report_to: datetime | None = None,
 ) -> ReplayResult:
     """Replay state-changing events with causal snapshots and future outcomes.
 
@@ -53,6 +56,9 @@ def replay_history(
     for transition in transitions:
         if transition.new_state == transition.previous_state or transition.winning_event is None:
             continue
+        knowledge_time = transition.bar_open_time + bar_duration(event_timeframe)
+        if (report_from is not None and knowledge_time < report_from) or (report_to is not None and knowledge_time >= report_to):
+            continue
         event_time = pd.Timestamp(transition.bar_open_time)
         index = positions[event_time]
         context = context_for_event(
@@ -71,7 +77,7 @@ def replay_history(
             symbol=symbol,
             event_timeframe=event_timeframe,
             event_bar_open_time=transition.bar_open_time,
-            event_knowledge_time=transition.bar_open_time + bar_duration(event_timeframe),
+            event_knowledge_time=knowledge_time,
             event_type=transition.winning_event.event_type,
             event_direction=context.event_direction,
             previous_state=transition.previous_state,
