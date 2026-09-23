@@ -13,6 +13,7 @@ Commands:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import sys
@@ -35,6 +36,10 @@ from .signals import replay_cloudgazer
 from .signals.vwap_events import broker_session_anchors
 from .research import DEFAULT_HORIZONS, export_parquet, replay_history, summarize
 from .research.acquisition import ResearchHistoryStore, acquire, validate_replay_coverage, utc_date, TIMEFRAMES
+from .research.analysis import (DEFAULT_HORIZONS as ANALYSIS_HORIZONS, REPORTS,
+                                available_horizons, cohort_statistics, dimensions,
+                                filter_events, load_replay, overview, report_groups,
+                                resolve_fields, segment_events)
 
 logger = logging.getLogger(__name__)
 
@@ -798,10 +803,86 @@ def main(argv: Optional[list[str]] = None) -> int:
     p_research.add_argument("--warmup-days", type=int, default=180)
     p_research.add_argument("--chunk-days", type=int, default=14)
     p_research.add_argument("--force-refresh", action="store_true")
+    p_cohort = sub.add_parser("research-analyze", help="offline descriptive analysis of replay Parquet")
+    p_cohort.add_argument("path", help="Phase 1.9 events Parquet")
+    p_cohort.add_argument("--group-by", help="comma-separated persisted categorical fields; direction aliases label")
+    p_cohort.add_argument("--where", action="append", default=[], metavar="FIELD=VALUE", help="repeatable AND filter")
+    p_cohort.add_argument("--report", choices=REPORTS, default="overview")
+    p_cohort.add_argument("--segment-by", choices=("year", "quarter", "month"))
+    p_cohort.add_argument("--horizons", help="comma-separated saved outcome horizons (default: 1,4,8,16,32 if present)")
+    p_cohort.add_argument("--min-samples", type=int, default=1, help="display only cohorts with at least N events")
+    p_cohort.add_argument("--output", help="write cohort rows to CSV or Parquet")
+    p_cohort.add_argument("--list-fields", action="store_true", help="list grouping/filter fields in this artifact")
     p_clear = sub.add_parser("history-clear", help="delete cached history (requires --yes)")
     p_clear.add_argument("--yes", action="store_true", help="confirm deletion")
 
     args = parser.parse_args(argv)
+
+    # Analysis is deliberately independent of configuration, MT5, and Wine.
+    if args.command == "research-analyze":
+        try:
+            frame = load_replay(args.path)
+            if args.list_fields:
+                print("Available dimensions (direction is an alias for label):")
+                print("\n".join(dimensions(frame)))
+                return 0
+            horizons = available_horizons(frame)
+            if args.horizons:
+                try:
+                    requested = tuple(int(part.strip()) for part in args.horizons.split(","))
+                except ValueError as exc:
+                    raise ValueError("--horizons must be comma-separated positive integers") from exc
+                if not requested or any(h < 1 for h in requested) or len(set(requested)) != len(requested):
+                    raise ValueError("--horizons must contain unique positive integers")
+                horizons = requested
+            else:
+                horizons = tuple(h for h in ANALYSIS_HORIZONS if h in horizons) or horizons
+            frame = filter_events(frame, args.where)
+            frame = segment_events(frame, args.segment_by)
+            if args.group_by:
+                groups = [("custom", resolve_fields(frame, args.group_by))]
+            else:
+                groups = report_groups(frame, args.report)
+            tables = []
+            if args.report == "overview" and not args.group_by:
+                print(overview(frame, horizons))
+            for name, fields in groups:
+                if args.segment_by:
+                    fields = ("period", *fields)
+                table = cohort_statistics(frame, fields, horizons, args.min_samples)
+                table.insert(0, "report", name)
+                tables.append(table)
+                print(f"\n{name}: {len(table):,} cohort/horizon rows")
+                if not table.empty:
+                    print(table.to_string(index=False, float_format=lambda x: f"{x:.6g}"))
+            if args.output:
+                output = Path(args.output)
+                if output.suffix.lower() not in (".csv", ".parquet"):
+                    raise ValueError("--output must end in .csv or .parquet")
+                output.parent.mkdir(parents=True, exist_ok=True)
+                combined = pd.concat(tables, ignore_index=True)
+                if output.suffix.lower() == ".csv":
+                    combined.to_csv(output, index=False)
+                else:
+                    combined.to_parquet(output, index=False)
+                metadata = {
+                    "source_dataset": str(Path(args.path).resolve()),
+                    "source_sha256": hashlib.sha256(Path(args.path).read_bytes()).hexdigest(),
+                    "report": "custom" if args.group_by else args.report,
+                    "grouping_dimensions": {name: list(("period", *fields) if args.segment_by else fields)
+                                            for name, fields in groups},
+                    "filters": args.where,
+                    "segment_by": args.segment_by,
+                    "horizons": list(horizons),
+                    "min_samples": args.min_samples,
+                }
+                output.with_name(output.name + ".meta.json").write_text(
+                    json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+                print(f"Saved {len(combined):,} rows to {output}")
+            return 0
+        except (OSError, ValueError) as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 1
 
     try:
         config = load_config()
