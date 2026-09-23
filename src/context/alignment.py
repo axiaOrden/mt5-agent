@@ -10,7 +10,7 @@ _BEARISH_EVENTS = {EventType.VWAP_CROSS_BEARISH, EventType.TK_CROSS_BEARISH}
 
 
 def direction_for_event(event_type: EventType | None) -> Direction | None:
-    """Directional intent for state-machine events; engulfing is contextual."""
+    """Recorded direction of state-machine events; engulfing is contextual."""
     if event_type in _BULLISH_EVENTS:
         return Direction.BULLISH
     if event_type in _BEARISH_EVENTS:

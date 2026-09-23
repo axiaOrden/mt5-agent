@@ -532,7 +532,7 @@ def cmd_context(config: Config, logical: str, event_timeframe: str, window: int)
             print("(no state-changing event in available history)")
 
         print()
-        print("PVSRA confirmation for event candle")
+        print("PVSRA activity on event candle")
         print(_line("─"))
         pvsra = context.event_pvsra
         if pvsra is None:

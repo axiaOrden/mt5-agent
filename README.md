@@ -5,6 +5,9 @@ account health, dynamic broker symbol discovery, preferred-symbol resolution,
 open-position discovery, historical data synchronization, multi-timeframe
 Ichimoku calculation and deterministic market-state analysis.
 
+For the current division of observation, research, pending VCZ design, and
+execution responsibilities, see [observation architecture](docs/observation-architecture.md).
+
 Phase 1.5 replaced mock market/account input with **real MT5 data** through a
 read-only HTTP bridge running under Wine. Phase 1.7 enforces the
 **closed-candle invariant** (strategy analysis never uses a forming candle),
@@ -359,8 +362,9 @@ logged.
 
 ## Future phases (not implemented)
 
-Position manager, risk engine, trade journal, backtesting, signal engine,
-Hermes/LLM integration, news/event analysis, Telegram interface, remote MT5
-execution, automated SL/TP management, partial closing, trade execution.
+VCZ research lifecycle (definitions pending), position manager, risk engine,
+trade journal, execution backtesting, Hermes/LLM integration, news/event analysis, Telegram
+interface, remote MT5 execution, automated SL/TP management, partial closing,
+trade execution.
 The architecture keeps these addable without rework.
 # mt5-agent

@@ -1,4 +1,4 @@
-"""Immutable Phase 1.8C PVSRA confirmation facts."""
+"""Immutable Phase 1.8C PVSRA activity observations."""
 from __future__ import annotations
 
 from dataclasses import dataclass
