@@ -5,8 +5,10 @@ account health, dynamic broker symbol discovery, preferred-symbol resolution,
 open-position discovery, historical data synchronization, multi-timeframe
 Ichimoku calculation and deterministic market-state analysis.
 
-For the current division of observation, research, pending VCZ design, and
+For the current division of observation, research, VCZ price memory, and
 execution responsibilities, see [observation architecture](docs/observation-architecture.md).
+The independent, offline VCZ V1 price-memory replay is described in
+[VCZ V1](docs/vcz-v1.md).
 
 Phase 1.5 replaced mock market/account input with **real MT5 data** through a
 read-only HTTP bridge running under Wine. Phase 1.7 enforces the
@@ -362,7 +364,7 @@ logged.
 
 ## Future phases (not implemented)
 
-VCZ research lifecycle (definitions pending), position manager, risk engine,
+VCZ Area-of-Interest/revisit research lifecycle (definitions pending), position manager, risk engine,
 trade journal, execution backtesting, Hermes/LLM integration, news/event analysis, Telegram
 interface, remote MT5 execution, automated SL/TP management, partial closing,
 trade execution.

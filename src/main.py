@@ -36,6 +36,7 @@ from .signals import replay_cloudgazer
 from .signals.vwap_events import broker_session_anchors
 from .research import DEFAULT_HORIZONS, export_parquet, replay_history, summarize
 from .research.acquisition import ResearchHistoryStore, acquire, validate_replay_coverage, utc_date, TIMEFRAMES
+from .research.vcz_history import replay_native_vcz, vcz_summary
 from .research.analysis import (DEFAULT_HORIZONS as ANALYSIS_HORIZONS, REPORTS,
                                 available_horizons, cohort_statistics, dimensions,
                                 filter_events, load_replay, overview, report_groups,
@@ -803,6 +804,14 @@ def main(argv: Optional[list[str]] = None) -> int:
     p_research.add_argument("--warmup-days", type=int, default=180)
     p_research.add_argument("--chunk-days", type=int, default=14)
     p_research.add_argument("--force-refresh", action="store_true")
+    p_vcz = sub.add_parser("vcz", help="offline VCZ price memory from saved native research history")
+    p_vcz.add_argument("symbol", help="exact stored broker symbol, e.g. XAUUSDc")
+    p_vcz.add_argument("--timeframe", choices=TIMEFRAMES, required=True)
+    p_vcz.add_argument("--research-history", action="store_true", required=True,
+                       help="read saved research candles without contacting MT5")
+    p_vcz.add_argument("--history-dir", default="data/research/history")
+    p_vcz.add_argument("--max-zones", type=int, help="optional Pine box-array limit per side (default: full research history)")
+    p_vcz.add_argument("--sample", type=int, default=5, help="number of recent surviving zones to print")
     p_cohort = sub.add_parser("research-analyze", help="offline descriptive analysis of replay Parquet")
     p_cohort.add_argument("path", help="Phase 1.9 events Parquet")
     p_cohort.add_argument("--group-by", help="comma-separated persisted categorical fields; direction aliases label")
@@ -817,6 +826,34 @@ def main(argv: Optional[list[str]] = None) -> int:
     p_clear.add_argument("--yes", action="store_true", help="confirm deletion")
 
     args = parser.parse_args(argv)
+
+    if args.command == "vcz":
+        try:
+            if args.sample < 0:
+                raise ValueError("--sample must be nonnegative")
+            store = ResearchHistoryStore(Path(args.history_dir))
+            bars = store.load(args.symbol, args.timeframe)
+            daily = store.load(args.symbol, "D1")
+            if bars.empty or daily.empty:
+                raise ValueError(f"Saved {args.symbol} {args.timeframe}/D1 research history is required")
+            replay = replay_native_vcz(bars, daily, symbol=args.symbol,
+                                       timeframe=args.timeframe, max_zones=args.max_zones)
+            for key, value in vcz_summary(replay).items():
+                print(f"{key}: {value}")
+            if args.sample:
+                print("Recent surviving zones (chronological sample):")
+                selected = replay.surviving_zones[-args.sample:]
+                for zone in selected:
+                    age = replay.candles_processed - 1 - zone.created_bar_index
+                    print(f"{zone.side.value:<5} {zone.source_bar_open_time.isoformat()} "
+                          f"{zone.pvsra_classification.value}/{zone.pvsra_candle_direction.value} "
+                          f"original=[{zone.original_bottom:g}, {zone.original_top:g}] "
+                          f"remaining=[{zone.current_bottom:g}, {zone.current_top:g}] "
+                          f"fraction={zone.remaining_fraction} age_bars={age}")
+            return 0
+        except (OSError, ValueError, HistoryError) as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 1
 
     # Analysis is deliberately independent of configuration, MT5, and Wine.
     if args.command == "research-analyze":

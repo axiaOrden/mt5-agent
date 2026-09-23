@@ -12,7 +12,7 @@ data; it does not invalidate either observation.
 | Cloudgazer | Record its own raw events, state changes, and BUY/SELL/WB/WS labels | Implemented; labels describe that state machine, not a final trading decision |
 | Multi-timeframe context | Preserve native-timeframe structure, states, roles, and descriptive alignments at a causal cutoff | Implemented; alignment does not filter events or score them |
 | Historical replay and cohort analysis | Preserve events, independent PVSRA/context facts, saved forward outcomes, and descriptive group statistics | Implemented; `research-analyze` reads only its saved event Parquet |
-| VCZ | Remember locations of qualifying PVSRA activity; later study movement away, return, and reaction | **DESIGN PENDING** for Candidate, Active, Revisited/Area of Interest, and Invalidated lifecycle definitions |
+| VCZ | Remember locations of qualifying PVSRA activity and the remaining unrecovered price range | Pine-compatible price-memory V1 implemented; Candidate, Active, Revisited/Area of Interest, and Invalidated research definitions remain **DESIGN PENDING** |
 | Execution | Evaluate entries, stops, targets, and sizing only after separate research and design | Not implemented |
 
 The intended research sequence is structure → activity → location memory →
@@ -28,7 +28,7 @@ No PVSRA class implies BUY/SELL, and no alignment value implies a superior
 signal. The analyst chooses explicit cohorts; the software does not rank or
 recommend them.
 
-Current `research-analyze` statistics, Cloudgazer event labels, and alignment
-fields remain historical observations. The definitions for activating or
-revisiting a future VCZ have not been chosen and must not be inferred from a
-Pine box's drawing or recovery behavior.
+Current `research-analyze` statistics, Cloudgazer event labels, alignment
+fields, and VCZ V1 geometry remain historical observations. The definitions
+for activating or revisiting a zone as an Area of Interest have not been
+chosen and must not be inferred from a Pine box's drawing or recovery behavior.
