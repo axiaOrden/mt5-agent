@@ -17,7 +17,7 @@ import hashlib
 import json
 import logging
 import sys
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -36,7 +36,8 @@ from .signals import replay_cloudgazer
 from .signals.vwap_events import broker_session_anchors
 from .research import DEFAULT_HORIZONS, export_parquet, replay_history, summarize
 from .research.acquisition import ResearchHistoryStore, acquire, validate_replay_coverage, utc_date, TIMEFRAMES
-from .research.vcz_history import replay_native_vcz, vcz_summary
+from .research.vcz_history import replay_native_vcz, replay_native_vcz_encounters, vcz_summary
+from .research.vcz_encounters import DEFAULT_ENCOUNTER_HORIZONS, export_vcz_encounters
 from .research.analysis import (DEFAULT_HORIZONS as ANALYSIS_HORIZONS, REPORTS,
                                 available_horizons, cohort_statistics, dimensions,
                                 filter_events, load_replay, overview, report_groups,
@@ -812,6 +813,15 @@ def main(argv: Optional[list[str]] = None) -> int:
     p_vcz.add_argument("--history-dir", default="data/research/history")
     p_vcz.add_argument("--max-zones", type=int, help="optional Pine box-array limit per side (default: full research history)")
     p_vcz.add_argument("--sample", type=int, default=5, help="number of recent surviving zones to print")
+    p_enc = sub.add_parser("vcz-encounters", help="offline native-timeframe VCZ encounter observations")
+    p_enc.add_argument("symbol", help="exact stored broker symbol")
+    p_enc.add_argument("--timeframe", choices=TIMEFRAMES, required=True)
+    p_enc.add_argument("--research-history", action="store_true", required=True)
+    p_enc.add_argument("--history-dir", default="data/research/history")
+    p_enc.add_argument("--from", dest="research_from", help="inclusive UTC encounter date")
+    p_enc.add_argument("--to", dest="research_to", help="exclusive UTC encounter date")
+    p_enc.add_argument("--horizons", default=",".join(map(str, DEFAULT_ENCOUNTER_HORIZONS)))
+    p_enc.add_argument("--output", help="Parquet output path")
     p_cohort = sub.add_parser("research-analyze", help="offline descriptive analysis of replay Parquet")
     p_cohort.add_argument("path", help="Phase 1.9 events Parquet")
     p_cohort.add_argument("--group-by", help="comma-separated persisted categorical fields; direction aliases label")
@@ -826,6 +836,38 @@ def main(argv: Optional[list[str]] = None) -> int:
     p_clear.add_argument("--yes", action="store_true", help="confirm deletion")
 
     args = parser.parse_args(argv)
+
+    if args.command == "vcz-encounters":
+        try:
+            horizons = tuple(int(part.strip()) for part in args.horizons.split(","))
+            if not horizons or any(h < 1 for h in horizons) or len(set(horizons)) != len(horizons):
+                raise ValueError("--horizons must contain unique positive integers")
+            start = utc_date(args.research_from) if args.research_from else None
+            end = utc_date(args.research_to) if args.research_to else None
+            if start and end and end <= start:
+                raise ValueError("--to must follow --from")
+            store = ResearchHistoryStore(Path(args.history_dir))
+            bars = store.load(args.symbol, args.timeframe)
+            daily = store.load(args.symbol, "D1")
+            if bars.empty or daily.empty:
+                raise ValueError(f"Saved {args.symbol} {args.timeframe}/D1 research history is required")
+            replay = replay_native_vcz_encounters(bars, daily, symbol=args.symbol,
+                                                   timeframe=args.timeframe, horizons=horizons)
+            encounters = tuple(e for e in replay.encounters
+                               if (start is None or e.candle_open_time >= start) and
+                               (end is None or e.candle_open_time < end))
+            replay = replace(replay, encounters=encounters)
+            output = Path(args.output) if args.output else Path("data/research/vcz") / f"{args.symbol}_{args.timeframe}_encounters.parquet"
+            export_vcz_encounters(replay, output)
+            print(f"candles_processed: {replay.candles_processed}")
+            print(f"zones_created: {replay.zones_created}")
+            print(f"encounters: {len(encounters)}")
+            print(f"unique_zones_encountered: {len({e.zone_id for e in encounters})}")
+            print(f"output: {output}")
+            return 0
+        except (OSError, ValueError, HistoryError) as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 1
 
     if args.command == "vcz":
         try:

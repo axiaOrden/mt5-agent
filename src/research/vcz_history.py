@@ -8,6 +8,7 @@ import pandas as pd
 from ..signals.vwap_events import broker_session_anchors
 from .pvsra_index import PVSRAIndex
 from .vcz import VCZReplay, VCZStatus, replay_vcz
+from .vcz_encounters import VCZEncounterReplay, replay_vcz_encounters, DEFAULT_ENCOUNTER_HORIZONS
 
 
 def replay_native_vcz(bars: pd.DataFrame, daily_bars: pd.DataFrame, *,
@@ -21,6 +22,19 @@ def replay_native_vcz(bars: pd.DataFrame, daily_bars: pd.DataFrame, *,
     results = [index.at(i) for i in range(len(bars))]
     return replay_vcz(bars, results, symbol=symbol, timeframe=timeframe,
                       max_zones=max_zones)
+
+
+def replay_native_vcz_encounters(bars: pd.DataFrame, daily_bars: pd.DataFrame, *,
+                                 symbol: str, timeframe: str,
+                                 horizons=DEFAULT_ENCOUNTER_HORIZONS) -> VCZEncounterReplay:
+    """Offline adapter using existing broker session PVSRA measurements."""
+    if bars.empty:
+        return VCZEncounterReplay(symbol, timeframe, 0, 0, ())
+    anchors = broker_session_anchors(daily_bars, pd.Timestamp(bars["time"].iloc[-1]))
+    index = PVSRAIndex(bars, anchors)
+    results = [index.at(i) for i in range(len(bars))]
+    return replay_vcz_encounters(bars, results, symbol=symbol, timeframe=timeframe,
+                                 horizons=horizons)
 
 
 def vcz_summary(replay: VCZReplay) -> dict:
