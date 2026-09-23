@@ -51,3 +51,18 @@ the request, broker symbol, counts, timestamps, warmup, and fingerprints.
 The bridge and provider remain read-only. The existing `replay` command keeps
 its ordinary operational-history behavior unless `--research-history` is
 explicitly selected.
+
+Historical replay builds one Cloudgazer timeline per required timeframe and
+uses closed-candle as-of indexes for each event context. A broker D1 clock
+shift that would change the legacy prefix anchor uses the original context
+calculation for that event. This changes only how the same research facts are
+computed; the live context API is unchanged. To measure a stored research
+range without provider calls or output writes:
+
+```bash
+.venv/bin/python -m scripts.benchmark_replay XAUUSDc --from 2026-01-01 --to 2026-09-22
+```
+
+The benchmark reports input candles, state-changing events, runtime and
+Cloudgazer replay invocations. It uses a configurable 180-calendar-day warmup
+for the timed input range.

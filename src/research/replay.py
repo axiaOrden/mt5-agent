@@ -4,10 +4,8 @@ from __future__ import annotations
 import pandas as pd
 from datetime import datetime
 
-from ..context.engine import context_for_event
 from ..mt5.closure import bar_duration
-from ..signals.cloudgazer import replay_cloudgazer
-from ..signals.vwap_events import broker_session_anchors
+from .context_index import ResearchContextIndex
 from .models import EventCandle, ReplayEvent, ReplayResult
 from .outcomes import measure_forward_outcomes
 
@@ -47,11 +45,11 @@ def replay_history(
             (), None, True,
         )
 
-    anchors = broker_session_anchors(daily, pd.Timestamp(event_bars["time"].iloc[-1]))
-    transitions = replay_cloudgazer(
-        event_bars, symbol, event_timeframe, daily_opens=anchors
+    context_index = ResearchContextIndex(
+        histories, symbol, event_timeframe, event_bars, daily, stability_window,
     )
-    positions = {pd.Timestamp(value): index for index, value in enumerate(event_bars["time"])}
+    transitions = context_index.event_transitions
+    positions = {pd.Timestamp(value): position for position, value in enumerate(event_bars["time"])}
     records = []
     for transition in transitions:
         if transition.new_state == transition.previous_state or transition.winning_event is None:
@@ -61,10 +59,7 @@ def replay_history(
             continue
         event_time = pd.Timestamp(transition.bar_open_time)
         index = positions[event_time]
-        context = context_for_event(
-            histories, symbol, event_timeframe, transition,
-            stability_window=stability_window,
-        )
+        context = context_index.context_for_event(transition)
         if context.event_direction is None:
             continue
         row = event_bars.iloc[index]

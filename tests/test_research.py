@@ -10,8 +10,17 @@ from src.mt5.closure import bar_duration
 from src.research import (
     export_parquet, measure_forward_outcomes, replay_frame, replay_history, summarize,
 )
-from src.signals.cloudgazer import replay_cloudgazer
-from src.signals.vwap_events import broker_session_anchors
+from src.research.context_index import ResearchContextIndex
+from src.research.pvsra_index import PVSRAIndex
+from src.context.engine import context_for_event as legacy_context_for_event
+from src.context.engine import relevant_timeframes
+from src.analysis.market_state import MarketStateAnalyzer
+from src.signals.cloudgazer import reduce_cloudgazer, replay_cloudgazer
+from src.signals.ichimoku_events import cloudgazer_ichimoku, tk_cross
+from src.signals.vwap_events import broker_session_anchors, session_vwap, vwap_cross
+from src.signals.candle_events import engulfing
+from src.signals.models import CloudgazerState, SignalEvent
+from src.pvsra.engine import analyze_pvsra
 
 
 END = datetime(2026, 4, 10, 12, tzinfo=timezone.utc)
@@ -166,3 +175,137 @@ def test_parquet_round_trip_preserves_timestamps_and_primitives(tmp_path):
     assert set(loaded.event_type).issubset({
         "VWAP_CROSS_BULLISH", "VWAP_CROSS_BEARISH", "TK_CROSS_BULLISH", "TK_CROSS_BEARISH"
     })
+
+
+@pytest.mark.parametrize("event_timeframe", ("M15", "H1", "H4", "D1"))
+def test_indexed_research_matches_legacy_context_and_export(monkeypatch, event_timeframe):
+    data = histories()
+    optimized = replay_history(data, "TEST", event_timeframe, horizons=(1, 4, 8))
+
+    def legacy(self, transition):
+        return legacy_context_for_event(
+            self.histories, self.symbol, self.event_timeframe, transition,
+            stability_window=self.stability_window,
+        )
+
+    with monkeypatch.context() as patcher:
+        patcher.setattr(ResearchContextIndex, "context_for_event", legacy)
+        baseline = replay_history(data, "TEST", event_timeframe, horizons=(1, 4, 8))
+
+    assert optimized == baseline
+    pd.testing.assert_frame_equal(replay_frame(optimized), replay_frame(baseline))
+    assert summarize(optimized.events, optimized.horizons) == summarize(baseline.events, baseline.horizons)
+    assert summarize(optimized.events, optimized.horizons, group_by="pvsra_classification") == summarize(
+        baseline.events, baseline.horizons, group_by="pvsra_classification")
+
+
+def test_research_cloudgazer_calls_scale_with_timeframes(monkeypatch):
+    import src.research.context_index as indexed_module
+    import src.context.engine as context_module
+    real = indexed_module.replay_cloudgazer
+    calls = []
+
+    def counted(*args, **kwargs):
+        calls.append(args[2])
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(indexed_module, "replay_cloudgazer", counted)
+    monkeypatch.setattr(context_module, "replay_cloudgazer", counted)
+    data = histories()
+    result = replay_history(data, "TEST", horizons=(1,))
+    assert len(result.events) > 4
+    assert calls == list(relevant_timeframes("M15"))
+    index = ResearchContextIndex(data, "TEST", "M15", data["M15"], data["D1"], 20)
+    anchors = broker_session_anchors(data["D1"], data["M15"].time.iloc[-1])
+    assert index.event_transitions == replay_cloudgazer(data["M15"], "TEST", "M15", daily_opens=anchors)
+
+
+def test_session_clock_shift_uses_exact_legacy_prefix_context(monkeypatch):
+    import src.research.context_index as indexed_module
+    data = histories()
+    daily = data["D1"].copy()
+    shifted = daily["time"] >= pd.Timestamp("2026-04-09 12:00", tz="UTC")
+    daily.loc[shifted, "time"] += pd.Timedelta(hours=1)
+    data["D1"] = daily
+    fallback_calls = []
+    real = indexed_module.context_for_event
+
+    def counted(*args, **kwargs):
+        fallback_calls.append(args[3].bar_open_time)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(indexed_module, "context_for_event", counted)
+    optimized = replay_history(data, "TEST", horizons=(1,))
+    assert fallback_calls
+
+    def legacy(self, transition):
+        return real(self.histories, self.symbol, self.event_timeframe, transition,
+                    stability_window=self.stability_window)
+
+    monkeypatch.setattr(ResearchContextIndex, "context_for_event", legacy)
+    baseline = replay_history(data, "TEST", horizons=(1,))
+    assert optimized == baseline
+
+
+def test_numpy_cloudgazer_loop_matches_scalar_reference_including_suppression():
+    data = histories()
+    bars = data["M15"].sort_values("time").reset_index(drop=True)
+    anchors = broker_session_anchors(data["D1"], bars.time.iloc[-1])
+    ichi = cloudgazer_ichimoku(bars)
+    vwap = session_vwap(bars, anchors)
+    state = CloudgazerState.FLAT
+    reference = []
+    for i in range(1, len(bars)):
+        bar, previous = bars.iloc[i], bars.iloc[i - 1]
+        time = pd.Timestamp(bar["time"]).to_pydatetime()
+        kinds = (
+            vwap_cross(previous["close"], vwap.iloc[i - 1], bar["close"], vwap.iloc[i]),
+            tk_cross(ichi.tenkan.iloc[i - 1], ichi.kijun.iloc[i - 1],
+                     ichi.tenkan.iloc[i], ichi.kijun.iloc[i]),
+            engulfing(previous["open"], previous["close"], bar["open"], bar["close"]),
+        )
+        events = tuple(SignalEvent("TEST", "M15", time, kind) for kind in kinds if kind is not None)
+        transition = reduce_cloudgazer(state, events, float(bar["close"]),
+                                        float(ichi.span_a.iloc[i]), float(ichi.span_b.iloc[i]), time)
+        reference.append(transition)
+        state = transition.new_state
+    assert replay_cloudgazer(bars, "TEST", "M15", daily_opens=anchors) == tuple(reference)
+
+
+def test_indexed_pvsra_matches_prefix_engine_across_volume_source_changes():
+    times = pd.date_range("2026-01-01", periods=120, freq="15min", tz="UTC")
+    values = np.arange(120)
+    bars = pd.DataFrame({
+        "time": times,
+        "open": 100 + values * .01,
+        "high": 101 + values * .01,
+        "low": 99 + values * .01,
+        "close": 100.5 + values * .01,
+        "tick_volume": np.full(120, 10.0),
+        "real_volume": np.zeros(120),
+        "spread": np.ones(120),
+    })
+    bars.loc[20, "real_volume"] = 5.0
+    bars.loc[40, "real_volume"] = np.nan
+    bars.loc[50, "tick_volume"] = np.nan
+    anchors = pd.Series(pd.to_datetime(["2026-01-01", "2026-01-02"], utc=True))
+    index = PVSRAIndex(bars, anchors)
+    for position in (0, 19, 20, 39, 40, 50, 95, 96, 110):
+        bar_time = times[position]
+        expected = analyze_pvsra(
+            bars.iloc[:position + 1], "M15", bar_open_time=bar_time,
+            daily_opens=anchors[anchors <= bar_time],
+        )
+        assert index.at(position) == expected
+
+
+@pytest.mark.parametrize("timeframe", ("M15", "H1", "H4", "D1"))
+def test_bounded_market_context_fields_equal_full_prefix(timeframe):
+    bars = history(timeframe, n=500)
+    analyzer = MarketStateAnalyzer()
+    for count in (78, 103, 104, 105, 150, 300, 500):
+        full = analyzer.analyze(bars.iloc[:count], "TEST", timeframe)
+        bounded = analyzer.analyze(bars.iloc[max(0, count - 104):count].reset_index(drop=True),
+                                   "TEST", timeframe)
+        assert (bounded.direction, bounded.condition, bounded.candle_time) == (
+            full.direction, full.condition, full.candle_time)

@@ -56,18 +56,26 @@ def replay_cloudgazer(df: pd.DataFrame, symbol: str, timeframe: str,
         raise ValueError("duplicate candle timestamps")
     ichi = cloudgazer_ichimoku(bars)
     vwap = session_vwap(bars, daily_opens)
+    # Keep the public pandas input/output contract while avoiding millions of
+    # scalar DataFrame/Series lookups during deep historical replay.
+    times = bars["time"].to_numpy()
+    open_values = bars["open"].to_numpy()
+    close_values = bars["close"].to_numpy()
+    vwap_values = vwap.to_numpy()
+    tenkan_values = ichi.tenkan.to_numpy()
+    kijun_values = ichi.kijun.to_numpy()
+    span_a_values = ichi.span_a.to_numpy()
+    span_b_values = ichi.span_b.to_numpy()
     state = CloudgazerState.FLAT
     transitions = []
     for i in range(1, len(bars)):
-        bar = bars.iloc[i]
-        prev = bars.iloc[i - 1]
-        time = pd.Timestamp(bar["time"]).to_pydatetime()
-        kinds = (vwap_cross(prev["close"], vwap.iloc[i - 1], bar["close"], vwap.iloc[i]),
-                 tk_cross(ichi.tenkan.iloc[i - 1], ichi.kijun.iloc[i - 1], ichi.tenkan.iloc[i], ichi.kijun.iloc[i]),
-                 engulfing(prev["open"], prev["close"], bar["open"], bar["close"]))
+        time = pd.Timestamp(times[i]).to_pydatetime()
+        kinds = (vwap_cross(close_values[i - 1], vwap_values[i - 1], close_values[i], vwap_values[i]),
+                 tk_cross(tenkan_values[i - 1], kijun_values[i - 1], tenkan_values[i], kijun_values[i]),
+                 engulfing(open_values[i - 1], close_values[i - 1], open_values[i], close_values[i]))
         events = tuple(SignalEvent(symbol, timeframe, time, kind) for kind in kinds if kind is not None)
-        transition = reduce_cloudgazer(state, events, float(bar["close"]),
-                                        float(ichi.span_a.iloc[i]), float(ichi.span_b.iloc[i]), time)
+        transition = reduce_cloudgazer(state, events, float(close_values[i]),
+                                        float(span_a_values[i]), float(span_b_values[i]), time)
         transitions.append(transition)
         state = transition.new_state
     return tuple(transitions)
