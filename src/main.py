@@ -38,6 +38,9 @@ from .research import DEFAULT_HORIZONS, export_parquet, replay_history, summariz
 from .research.acquisition import ResearchHistoryStore, acquire, validate_replay_coverage, utc_date, TIMEFRAMES
 from .research.vcz_history import replay_native_vcz, replay_native_vcz_encounters, vcz_summary
 from .research.vcz_encounters import DEFAULT_ENCOUNTER_HORIZONS, export_vcz_encounters
+from .research.vcz_encounter_analysis import (DIMENSIONS as VCZ_STUDY_DIMENSIONS,
+                                              cohort_study, export_study, inventory,
+                                              load_encounters, encounter_horizons)
 from .research.analysis import (DEFAULT_HORIZONS as ANALYSIS_HORIZONS, REPORTS,
                                 available_horizons, cohort_statistics, dimensions,
                                 filter_events, load_replay, overview, report_groups,
@@ -822,6 +825,18 @@ def main(argv: Optional[list[str]] = None) -> int:
     p_enc.add_argument("--to", dest="research_to", help="exclusive UTC encounter date")
     p_enc.add_argument("--horizons", default=",".join(map(str, DEFAULT_ENCOUNTER_HORIZONS)))
     p_enc.add_argument("--output", help="Parquet output path")
+    p_study = sub.add_parser("vcz-encounter-study", help="offline descriptive VCZ encounter cohorts")
+    p_study.add_argument("symbol", help="exact stored broker symbol, e.g. XAUUSDc")
+    p_study.add_argument("--timeframe", choices=TIMEFRAMES, required=True)
+    p_study.add_argument("--research-history", action="store_true", required=True)
+    p_study.add_argument("--history-dir", default="data/research/history")
+    p_study.add_argument("--encounter-dir", default="data/research/vcz")
+    p_study.add_argument("--population", choices=("all", "first", "both"), default="both")
+    p_study.add_argument("--segment", choices=("year", "quarter"), default="year")
+    p_study.add_argument("--dimension", choices=VCZ_STUDY_DIMENSIONS, action="append")
+    p_study.add_argument("--horizons", default=",".join(map(str, DEFAULT_ENCOUNTER_HORIZONS)))
+    p_study.add_argument("--min-sample", type=int, default=30)
+    p_study.add_argument("--output", help="CSV or Parquet cohort output")
     p_cohort = sub.add_parser("research-analyze", help="offline descriptive analysis of replay Parquet")
     p_cohort.add_argument("path", help="Phase 1.9 events Parquet")
     p_cohort.add_argument("--group-by", help="comma-separated persisted categorical fields; direction aliases label")
@@ -836,6 +851,49 @@ def main(argv: Optional[list[str]] = None) -> int:
     p_clear.add_argument("--yes", action="store_true", help="confirm deletion")
 
     args = parser.parse_args(argv)
+
+    if args.command == "vcz-encounter-study":
+        try:
+            horizons = tuple(int(part.strip()) for part in args.horizons.split(","))
+            symbol = args.symbol
+            store = ResearchHistoryStore(Path(args.history_dir))
+            if not store.path_for(symbol, args.timeframe).exists():
+                matches = [p.name for p in store.base_dir.iterdir()
+                           if p.is_dir() and p.name.startswith(symbol) and store.path_for(p.name, args.timeframe).exists()]
+                if len(matches) != 1:
+                    raise ValueError(f"Stored {symbol} {args.timeframe} history is missing or symbol is ambiguous")
+                symbol = matches[0]
+            input_path = Path(args.encounter_dir) / f"{symbol}_{args.timeframe}_encounters.parquet"
+            if not input_path.exists():
+                bars = store.load(symbol, args.timeframe)
+                daily = store.load(symbol, "D1")
+                if bars.empty or daily.empty:
+                    raise ValueError(f"Saved {symbol} {args.timeframe}/D1 history is required")
+                replay = replay_native_vcz_encounters(bars, daily, symbol=symbol,
+                                                       timeframe=args.timeframe)
+                export_vcz_encounters(replay, input_path)
+            frame = load_encounters(input_path, symbol=symbol, timeframe=args.timeframe)
+            unavailable = sorted(set(horizons) - set(encounter_horizons(frame)))
+            if unavailable:
+                raise ValueError(f"Encounter artifact lacks horizons: {unavailable}")
+            populations = ("ALL", "FIRST") if args.population == "both" else (args.population.upper(),)
+            dimensions = tuple(dict.fromkeys(args.dimension or VCZ_STUDY_DIMENSIONS))
+            result = cohort_study(frame, populations=populations, segment=args.segment,
+                                  dimensions=dimensions, horizons=horizons,
+                                  min_sample=args.min_sample)
+            output = Path(args.output) if args.output else Path(args.encounter_dir) / f"{symbol}_{args.timeframe}_cohorts.csv"
+            export_study(result, output, input_path=input_path, symbol=symbol,
+                         timeframe=args.timeframe, populations=populations,
+                         segment=args.segment, dimensions=dimensions, horizons=horizons,
+                         min_sample=args.min_sample)
+            counts = inventory(frame)
+            print(f"symbol: {symbol} timeframe: {args.timeframe}")
+            print(" ".join(f"{key}={value}" for key, value in counts.items()))
+            print(f"cohort_rows: {len(result)} output: {output}")
+            return 0
+        except (OSError, ValueError, HistoryError) as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 1
 
     if args.command == "vcz-encounters":
         try:
